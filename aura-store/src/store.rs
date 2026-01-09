@@ -1,0 +1,129 @@
+//! Store trait definition.
+
+use crate::error::StoreError;
+use aura_core::{AgentId, RecordEntry, Transaction};
+
+/// Agent status values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum AgentStatus {
+    /// Agent is active and processing
+    #[default]
+    Active = 0,
+    /// Agent is paused
+    Paused = 1,
+    /// Agent is permanently stopped
+    Dead = 2,
+}
+
+impl AgentStatus {
+    /// Convert to byte.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// Parse from byte.
+    #[must_use]
+    pub const fn from_byte(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::Active),
+            1 => Some(Self::Paused),
+            2 => Some(Self::Dead),
+            _ => None,
+        }
+    }
+}
+
+/// Storage trait for the Aura system.
+///
+/// All implementations must provide atomic commit semantics.
+pub trait Store: Send + Sync {
+    /// Enqueue a transaction to an agent's inbox.
+    ///
+    /// This is a durable write - the transaction is persisted before returning.
+    ///
+    /// # Errors
+    /// Returns error if the write fails.
+    fn enqueue_tx(&self, tx: &Transaction) -> Result<(), StoreError>;
+
+    /// Dequeue a transaction from an agent's inbox.
+    ///
+    /// Returns the inbox sequence number and transaction, or None if inbox is empty.
+    /// Does NOT delete the transaction - that happens in `append_entry_atomic`.
+    ///
+    /// # Errors
+    /// Returns error if the read fails.
+    fn dequeue_tx(&self, agent_id: AgentId) -> Result<Option<(u64, Transaction)>, StoreError>;
+
+    /// Get the current head sequence number for an agent.
+    ///
+    /// Returns 0 if the agent has no record entries yet.
+    ///
+    /// # Errors
+    /// Returns error if the read fails.
+    fn get_head_seq(&self, agent_id: AgentId) -> Result<u64, StoreError>;
+
+    /// Atomically append a record entry and update agent state.
+    ///
+    /// This commits in a single `WriteBatch`:
+    /// 1. Put record entry at `next_seq`
+    /// 2. Update `head_seq` to `next_seq`
+    /// 3. Delete inbox entry at `dequeued_inbox_seq`
+    /// 4. Update `inbox_head` cursor
+    ///
+    /// # Errors
+    /// Returns error if the write fails (nothing is committed).
+    fn append_entry_atomic(
+        &self,
+        agent_id: AgentId,
+        next_seq: u64,
+        entry: &RecordEntry,
+        dequeued_inbox_seq: u64,
+    ) -> Result<(), StoreError>;
+
+    /// Scan record entries for an agent.
+    ///
+    /// Returns entries starting from `from_seq` up to `limit` entries.
+    ///
+    /// # Errors
+    /// Returns error if the scan fails.
+    fn scan_record(
+        &self,
+        agent_id: AgentId,
+        from_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<RecordEntry>, StoreError>;
+
+    /// Get a single record entry.
+    ///
+    /// # Errors
+    /// Returns error if the entry is not found or read fails.
+    fn get_record_entry(&self, agent_id: AgentId, seq: u64) -> Result<RecordEntry, StoreError>;
+
+    /// Get agent status.
+    ///
+    /// Returns `Active` if not explicitly set.
+    ///
+    /// # Errors
+    /// Returns error if the read fails.
+    fn get_agent_status(&self, agent_id: AgentId) -> Result<AgentStatus, StoreError>;
+
+    /// Set agent status.
+    ///
+    /// # Errors
+    /// Returns error if the write fails.
+    fn set_agent_status(&self, agent_id: AgentId, status: AgentStatus) -> Result<(), StoreError>;
+
+    /// Check if agent has pending transactions in inbox.
+    ///
+    /// # Errors
+    /// Returns error if the read fails.
+    fn has_pending_tx(&self, agent_id: AgentId) -> Result<bool, StoreError>;
+
+    /// Get inbox depth (number of pending transactions).
+    ///
+    /// # Errors
+    /// Returns error if the read fails.
+    fn get_inbox_depth(&self, agent_id: AgentId) -> Result<u64, StoreError>;
+}

@@ -1,0 +1,618 @@
+//! Turn Processor for Claude Code-like agentic loop.
+//!
+//! The Turn Processor handles multi-step conversations where the model
+//! can request tools, receive results, and continue until completion.
+//!
+//! ## Turn Loop
+//!
+//! ```text
+//! loop {
+//!     1. Build context (deterministic)
+//!     2. Call ModelProvider.complete()
+//!     3. Record assistant response
+//!     4. If tool_use: authorize → execute → inject tool_result
+//!     5. If end_turn: finalize
+//! }
+//! ```
+//!
+//! ## Recording and Replay
+//!
+//! During normal operation, all model outputs and tool results are recorded.
+//! During replay, the recorded data is used instead of calling the model/tools,
+//! ensuring deterministic state reconstruction.
+
+use crate::policy::{PermissionLevel, Policy, PolicyConfig};
+use aura_core::{
+    Action, ActionId, ActionKind, AgentId, Decision, Effect, EffectKind, EffectStatus, ProposalSet,
+    RecordEntry, ToolCall, ToolResult, Transaction,
+};
+use aura_executor::{ExecuteContext, ExecutorRouter};
+use aura_reasoner::{
+    ContentBlock, Message, ModelProvider, ModelRequest, ModelResponse, StopReason, ToolDefinition,
+    ToolResultContent,
+};
+use aura_store::Store;
+use aura_tools::ToolRegistry;
+use bytes::Bytes;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tracing::{debug, error, info, instrument, warn};
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/// Turn processor configuration.
+#[derive(Debug, Clone)]
+pub struct TurnConfig {
+    /// Maximum steps (model calls) per turn
+    pub max_steps: u32,
+    /// Maximum tool calls per step
+    pub max_tool_calls_per_step: u32,
+    /// Model timeout in milliseconds
+    pub model_timeout_ms: u64,
+    /// Tool execution timeout in milliseconds
+    pub tool_timeout_ms: u64,
+    /// Context window size (record entries)
+    pub context_window: usize,
+    /// Model to use
+    pub model: String,
+    /// System prompt
+    pub system_prompt: String,
+    /// Base workspace directory
+    pub workspace_base: PathBuf,
+    /// Whether we're in replay mode (skip model/tools)
+    pub replay_mode: bool,
+    /// Temperature for model calls
+    pub temperature: Option<f32>,
+    /// Max tokens per response
+    pub max_tokens: u32,
+}
+
+impl Default for TurnConfig {
+    fn default() -> Self {
+        Self {
+            max_steps: 25,
+            max_tool_calls_per_step: 8,
+            model_timeout_ms: 60_000,
+            tool_timeout_ms: 30_000,
+            context_window: 50,
+            model: "claude-sonnet-4-20250514".to_string(),
+            system_prompt: default_system_prompt(),
+            workspace_base: PathBuf::from("./workspaces"),
+            replay_mode: false,
+            temperature: Some(0.7),
+            max_tokens: 4096,
+        }
+    }
+}
+
+/// Default system prompt for the agent.
+fn default_system_prompt() -> String {
+    r"You are an AI coding assistant with access to tools for reading, searching, and modifying files.
+
+When asked to help with coding tasks:
+1. First understand the codebase by reading relevant files
+2. Search for patterns and dependencies as needed
+3. Make precise, targeted changes
+
+Always explain your reasoning before taking actions.
+Be careful with file modifications - prefer small, focused changes.
+"
+    .to_string()
+}
+
+// ============================================================================
+// Turn Result
+// ============================================================================
+
+/// Result of processing a turn.
+#[derive(Debug)]
+pub struct TurnResult {
+    /// Record entries created during the turn
+    pub entries: Vec<TurnEntry>,
+    /// Final assistant message
+    pub final_message: Option<Message>,
+    /// Total tokens used
+    pub total_input_tokens: u32,
+    /// Total output tokens
+    pub total_output_tokens: u32,
+    /// Number of steps taken
+    pub steps: u32,
+    /// Whether any tools failed
+    pub had_failures: bool,
+}
+
+/// A single step entry in a turn.
+#[derive(Debug, Clone)]
+pub struct TurnEntry {
+    /// Step number within the turn (0-indexed)
+    pub turn_step: u32,
+    /// Model response for this step
+    pub model_response: ModelResponse,
+    /// Tool results from this step (if any)
+    pub tool_results: Vec<(String, ToolResultContent, bool)>,
+    /// Stop reason for this step
+    pub stop_reason: StopReason,
+}
+
+// ============================================================================
+// Turn Processor
+// ============================================================================
+
+/// Turn processor for multi-step agentic conversations.
+///
+/// The Turn Processor implements the core agentic loop where the model
+/// can propose tool uses, receive results, and continue until it decides
+/// to end the turn.
+pub struct TurnProcessor<P, S, R>
+where
+    P: ModelProvider,
+    S: Store,
+    R: ToolRegistry,
+{
+    provider: Arc<P>,
+    _store: Arc<S>,
+    executor: ExecutorRouter,
+    policy: Policy,
+    tool_registry: Arc<R>,
+    config: TurnConfig,
+}
+
+impl<P, S, R> TurnProcessor<P, S, R>
+where
+    P: ModelProvider,
+    S: Store,
+    R: ToolRegistry,
+{
+    /// Create a new turn processor.
+    #[must_use]
+    pub fn new(
+        provider: Arc<P>,
+        store: Arc<S>,
+        executor: ExecutorRouter,
+        tool_registry: Arc<R>,
+        config: TurnConfig,
+    ) -> Self {
+        let policy = Policy::new(PolicyConfig::default());
+        Self {
+            provider,
+            _store: store,
+            executor,
+            policy,
+            tool_registry,
+            config,
+        }
+    }
+
+    /// Create a turn processor with custom policy.
+    #[must_use]
+    pub fn with_policy(mut self, policy_config: PolicyConfig) -> Self {
+        self.policy = Policy::new(policy_config);
+        self
+    }
+
+    /// Get the workspace path for an agent.
+    fn agent_workspace(&self, agent_id: &AgentId) -> PathBuf {
+        self.config.workspace_base.join(agent_id.to_hex())
+    }
+
+    /// Build tool definitions from the registry.
+    fn build_tools(&self) -> Vec<ToolDefinition> {
+        self.tool_registry.list()
+    }
+
+    /// Build initial messages from a user transaction.
+    fn build_initial_messages(tx: &Transaction) -> Vec<Message> {
+        // Extract user prompt from transaction payload
+        let prompt = String::from_utf8_lossy(&tx.payload);
+        vec![Message::user(prompt.to_string())]
+    }
+
+    /// Process a user transaction through the full turn loop.
+    ///
+    /// This is the main entry point for processing a user message.
+    /// It loops until the model ends its turn or max steps is reached.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if model completion or tool execution fails.
+    #[allow(clippy::too_many_lines)] // Core orchestration logic - refactoring would hurt readability
+    #[instrument(skip(self, tx), fields(agent_id = %agent_id, tx_id = %tx.tx_id))]
+    pub async fn process_turn(
+        &self,
+        agent_id: AgentId,
+        tx: Transaction,
+        next_seq: u64,
+    ) -> anyhow::Result<TurnResult> {
+        let _ = next_seq; // Reserved for future replay support
+        info!("Starting turn processing");
+
+        let mut entries = Vec::new();
+        let mut messages = Self::build_initial_messages(&tx);
+        let tools = self.build_tools();
+
+        let mut total_input_tokens = 0u32;
+        let mut total_output_tokens = 0u32;
+        let mut had_failures = false;
+        let mut final_message = None;
+
+        for step in 0..self.config.max_steps {
+            debug!(step = step, messages = messages.len(), "Processing step");
+
+            // 1. Build model request
+            let request = ModelRequest::builder(&self.config.model, &self.config.system_prompt)
+                .messages(messages.clone())
+                .tools(tools.clone())
+                .max_tokens(self.config.max_tokens)
+                .temperature(self.config.temperature.unwrap_or(0.7))
+                .build();
+
+            // 2. Call model (skip in replay mode)
+            let response = if self.config.replay_mode {
+                debug!("Replay mode: skipping model call");
+                // In replay mode, we would load from recorded entries
+                // For now, return an empty end-turn response
+                ModelResponse::new(
+                    StopReason::EndTurn,
+                    Message::assistant("(replay)"),
+                    aura_reasoner::Usage::default(),
+                    aura_reasoner::ProviderTrace::new("replay", 0),
+                )
+            } else {
+                self.provider.complete(request).await?
+            };
+
+            // Track usage
+            total_input_tokens += response.usage.input_tokens;
+            total_output_tokens += response.usage.output_tokens;
+
+            debug!(
+                stop_reason = ?response.stop_reason,
+                input_tokens = response.usage.input_tokens,
+                output_tokens = response.usage.output_tokens,
+                "Received model response"
+            );
+
+            // 3. Add assistant message to conversation
+            messages.push(response.message.clone());
+            final_message = Some(response.message.clone());
+
+            // 4. Check stop reason and handle accordingly
+            match response.stop_reason {
+                StopReason::EndTurn => {
+                    // Turn complete
+                    info!(step = step, "Turn completed (end_turn)");
+                    entries.push(TurnEntry {
+                        turn_step: step,
+                        model_response: response,
+                        tool_results: vec![],
+                        stop_reason: StopReason::EndTurn,
+                    });
+                    break;
+                }
+                StopReason::ToolUse => {
+                    // Extract and execute tool calls
+                    let tool_results = self.execute_tool_calls(&response.message, agent_id).await?;
+
+                    // Check for failures
+                    if tool_results.iter().any(|(_, _, is_error)| *is_error) {
+                        had_failures = true;
+                    }
+
+                    // Record this step
+                    entries.push(TurnEntry {
+                        turn_step: step,
+                        model_response: response,
+                        tool_results: tool_results.clone(),
+                        stop_reason: StopReason::ToolUse,
+                    });
+
+                    // Add tool results to conversation for next iteration
+                    if !tool_results.is_empty() {
+                        messages.push(Message::tool_results(tool_results));
+                    }
+                }
+                StopReason::MaxTokens => {
+                    warn!(step = step, "Turn stopped due to max_tokens");
+                    entries.push(TurnEntry {
+                        turn_step: step,
+                        model_response: response,
+                        tool_results: vec![],
+                        stop_reason: StopReason::MaxTokens,
+                    });
+                    break;
+                }
+                StopReason::StopSequence => {
+                    debug!(step = step, "Turn stopped at stop sequence");
+                    entries.push(TurnEntry {
+                        turn_step: step,
+                        model_response: response,
+                        tool_results: vec![],
+                        stop_reason: StopReason::StopSequence,
+                    });
+                    break;
+                }
+            }
+        }
+
+        #[allow(clippy::cast_possible_truncation)] // entries count is bounded by max_steps
+        let steps = entries.len() as u32;
+
+        info!(
+            steps = steps,
+            input_tokens = total_input_tokens,
+            output_tokens = total_output_tokens,
+            "Turn processing complete"
+        );
+
+        Ok(TurnResult {
+            entries,
+            final_message,
+            total_input_tokens,
+            total_output_tokens,
+            steps,
+            had_failures,
+        })
+    }
+
+    /// Execute tool calls from a model message.
+    async fn execute_tool_calls(
+        &self,
+        message: &Message,
+        agent_id: AgentId,
+    ) -> anyhow::Result<Vec<(String, ToolResultContent, bool)>> {
+        let mut results = Vec::new();
+        let workspace = self.agent_workspace(&agent_id);
+
+        // Ensure workspace exists
+        if let Err(e) = tokio::fs::create_dir_all(&workspace).await {
+            error!(error = %e, "Failed to create workspace");
+        }
+
+        for block in &message.content {
+            if let ContentBlock::ToolUse { id, name, input } = block {
+                debug!(tool = %name, id = %id, "Executing tool");
+
+                // 1. Check policy
+                let permission = self.policy.check_tool_permission(name);
+
+                match permission {
+                    PermissionLevel::Deny => {
+                        warn!(tool = %name, "Tool denied by policy");
+                        results.push((
+                            id.clone(),
+                            ToolResultContent::text(format!("Tool '{name}' is not allowed")),
+                            true,
+                        ));
+                        continue;
+                    }
+                    PermissionLevel::AlwaysAsk => {
+                        // For now, treat AlwaysAsk as requiring approval
+                        // The CLI will handle the approval flow
+                        debug!(tool = %name, "Tool requires approval (AlwaysAsk)");
+                    }
+                    PermissionLevel::AskOnce => {
+                        // For now, allow after first ask
+                        debug!(tool = %name, "Tool allowed (AskOnce)");
+                    }
+                    PermissionLevel::AlwaysAllow => {
+                        debug!(tool = %name, "Tool allowed (AlwaysAllow)");
+                    }
+                }
+
+                // 2. Execute tool
+                let tool_call = ToolCall::new(name.clone(), input.clone());
+                let action = Action::delegate_tool(&tool_call);
+                let ctx = ExecuteContext::new(agent_id, action.action_id, workspace.clone());
+
+                match self.executor.execute(&ctx, &action).await {
+                    effect if effect.status == EffectStatus::Committed => {
+                        // Parse the tool result from the effect payload
+                        if let Ok(tool_result) =
+                            serde_json::from_slice::<ToolResult>(&effect.payload)
+                        {
+                            let content = if tool_result.stdout.is_empty() {
+                                ToolResultContent::text("Success (no output)")
+                            } else {
+                                ToolResultContent::text(
+                                    String::from_utf8_lossy(&tool_result.stdout).to_string(),
+                                )
+                            };
+                            results.push((id.clone(), content, !tool_result.ok));
+                        } else {
+                            results.push((
+                                id.clone(),
+                                ToolResultContent::text("Tool executed successfully"),
+                                false,
+                            ));
+                        }
+                    }
+                    effect => {
+                        // Tool failed
+                        let error_msg = if let Ok(tool_result) =
+                            serde_json::from_slice::<ToolResult>(&effect.payload)
+                        {
+                            String::from_utf8_lossy(&tool_result.stderr).to_string()
+                        } else {
+                            "Tool execution failed".to_string()
+                        };
+                        results.push((id.clone(), ToolResultContent::text(error_msg), true));
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Convert turn results to a legacy `RecordEntry` for storage.
+    ///
+    /// This provides backwards compatibility with the existing storage format.
+    pub fn to_record_entry(
+        &self,
+        seq: u64,
+        tx: Transaction,
+        turn_result: &TurnResult,
+        context_hash: [u8; 32],
+    ) -> RecordEntry {
+        // Build proposals from the turn entries
+        let proposals = ProposalSet::new();
+
+        // Build decision
+        let decision = Decision::new();
+
+        // Build actions and effects from tool calls
+        let mut actions = Vec::new();
+        let mut effects = Vec::new();
+
+        for entry in &turn_result.entries {
+            for (tool_use_id, result, is_error) in &entry.tool_results {
+                let action_id = ActionId::generate();
+
+                // Create action
+                let action = Action::new(
+                    action_id,
+                    ActionKind::Delegate,
+                    Bytes::from(tool_use_id.clone()),
+                );
+                actions.push(action);
+
+                // Create effect
+                let effect_status = if *is_error {
+                    EffectStatus::Failed
+                } else {
+                    EffectStatus::Committed
+                };
+
+                let payload = match result {
+                    ToolResultContent::Text(s) => Bytes::from(s.clone()),
+                    ToolResultContent::Json(v) => {
+                        Bytes::from(serde_json::to_vec(v).unwrap_or_default())
+                    }
+                };
+
+                let effect = Effect::new(action_id, EffectKind::Agreement, effect_status, payload);
+                effects.push(effect);
+            }
+        }
+
+        RecordEntry::builder(seq, tx)
+            .context_hash(context_hash)
+            .proposals(proposals)
+            .decision(decision)
+            .actions(actions)
+            .effects(effects)
+            .build()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aura_reasoner::{MockProvider, MockResponse};
+    use aura_store::RocksStore;
+    use aura_tools::DefaultToolRegistry;
+    use tempfile::TempDir;
+
+    fn create_test_processor() -> (
+        TurnProcessor<MockProvider, RocksStore, DefaultToolRegistry>,
+        TempDir,
+        TempDir,
+    ) {
+        let db_dir = TempDir::new().unwrap();
+        let ws_dir = TempDir::new().unwrap();
+
+        let provider = Arc::new(MockProvider::simple_response("Hello!"));
+        let store = Arc::new(RocksStore::open(db_dir.path(), false).unwrap());
+        let executor = ExecutorRouter::new();
+        let tool_registry = Arc::new(DefaultToolRegistry::new());
+
+        let config = TurnConfig {
+            workspace_base: ws_dir.path().to_path_buf(),
+            ..TurnConfig::default()
+        };
+
+        let processor = TurnProcessor::new(provider, store, executor, tool_registry, config);
+        (processor, db_dir, ws_dir)
+    }
+
+    #[tokio::test]
+    async fn test_simple_turn() {
+        let (processor, _db_dir, _ws_dir) = create_test_processor();
+
+        let tx = Transaction::user_prompt(AgentId::generate(), "Hello");
+        let result = processor.process_turn(tx.agent_id, tx, 1).await.unwrap();
+
+        assert_eq!(result.steps, 1);
+        assert!(!result.had_failures);
+        assert!(result.final_message.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_turn_with_tool_use() {
+        let db_dir = TempDir::new().unwrap();
+        let ws_dir = TempDir::new().unwrap();
+
+        // Create a mock that first requests a tool, then ends
+        let provider = Arc::new(
+            MockProvider::new()
+                .with_response(MockResponse::tool_use(
+                    "tool_1",
+                    "fs.ls",
+                    serde_json::json!({ "path": "." }),
+                ))
+                .with_response(MockResponse::text("I listed the files.")),
+        );
+
+        let store = Arc::new(RocksStore::open(db_dir.path(), false).unwrap());
+        let executor = ExecutorRouter::new();
+        let tool_registry = Arc::new(DefaultToolRegistry::new());
+
+        let config = TurnConfig {
+            workspace_base: ws_dir.path().to_path_buf(),
+            ..TurnConfig::default()
+        };
+
+        let processor = TurnProcessor::new(provider, store, executor, tool_registry, config);
+
+        let tx = Transaction::user_prompt(AgentId::generate(), "List files");
+        let result = processor.process_turn(tx.agent_id, tx, 1).await.unwrap();
+
+        // Should have 2 steps: tool use + end turn
+        assert_eq!(result.steps, 2);
+    }
+
+    #[tokio::test]
+    async fn test_max_steps_limit() {
+        let db_dir = TempDir::new().unwrap();
+        let ws_dir = TempDir::new().unwrap();
+
+        // Create a mock that always requests tools (never ends)
+        let provider = Arc::new(
+            MockProvider::new().with_default_response(MockResponse::tool_use(
+                "tool_1",
+                "fs.ls",
+                serde_json::json!({ "path": "." }),
+            )),
+        );
+
+        let store = Arc::new(RocksStore::open(db_dir.path(), false).unwrap());
+        let executor = ExecutorRouter::new();
+        let tool_registry = Arc::new(DefaultToolRegistry::new());
+
+        let config = TurnConfig {
+            workspace_base: ws_dir.path().to_path_buf(),
+            max_steps: 3, // Limit to 3 steps
+            ..TurnConfig::default()
+        };
+
+        let processor = TurnProcessor::new(provider, store, executor, tool_registry, config);
+
+        let tx = Transaction::user_prompt(AgentId::generate(), "Keep using tools");
+        let result = processor.process_turn(tx.agent_id, tx, 1).await.unwrap();
+
+        // Should stop at max_steps
+        assert_eq!(result.steps, 3);
+    }
+}

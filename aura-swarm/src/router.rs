@@ -1,0 +1,234 @@
+//! HTTP router for the swarm API.
+
+use crate::scheduler::Scheduler;
+use aura_core::{AgentId, Transaction, TransactionKind, TxId};
+use aura_reasoner::Reasoner;
+use aura_store::Store;
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
+use bytes::Bytes;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tower_http::trace::TraceLayer;
+use tracing::{error, info, instrument};
+
+/// Shared state for the router.
+pub struct RouterState<S, R>
+where
+    S: Store + 'static,
+    R: Reasoner + 'static,
+{
+    pub store: Arc<S>,
+    pub scheduler: Arc<Scheduler<S, R>>,
+}
+
+impl<S, R> Clone for RouterState<S, R>
+where
+    S: Store + 'static,
+    R: Reasoner + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+            scheduler: self.scheduler.clone(),
+        }
+    }
+}
+
+/// Create the router.
+pub fn create_router<S, R>(state: RouterState<S, R>) -> Router
+where
+    S: Store + 'static,
+    R: Reasoner + 'static,
+{
+    Router::new()
+        .route("/health", get(health_handler))
+        .route("/tx", post(submit_tx_handler::<S, R>))
+        .route("/agents/:agent_id/head", get(get_head_handler::<S, R>))
+        .route("/agents/:agent_id/record", get(scan_record_handler::<S, R>))
+        .with_state(state)
+        .layer(TraceLayer::new_for_http())
+}
+
+// === Health ===
+
+async fn health_handler() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION")
+    }))
+}
+
+// === Submit Transaction ===
+
+#[derive(Debug, Deserialize)]
+pub struct SubmitTxRequest {
+    pub agent_id: String,
+    pub kind: String,
+    pub payload: String, // base64 encoded
+}
+
+#[derive(Debug, Serialize)]
+pub struct SubmitTxResponse {
+    pub accepted: bool,
+    pub tx_id: String,
+}
+
+#[instrument(skip(state, request))]
+async fn submit_tx_handler<S, R>(
+    State(state): State<RouterState<S, R>>,
+    Json(request): Json<SubmitTxRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)>
+where
+    S: Store + 'static,
+    R: Reasoner + 'static,
+{
+    // Parse agent ID
+    let agent_id = AgentId::from_hex(&request.agent_id)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid agent_id: {e}")))?;
+
+    // Parse kind
+    let kind = match request.kind.as_str() {
+        "user_prompt" => TransactionKind::UserPrompt,
+        "agent_msg" => TransactionKind::AgentMsg,
+        "trigger" => TransactionKind::Trigger,
+        "action_result" => TransactionKind::ActionResult,
+        "system" => TransactionKind::System,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid kind: {}", request.kind),
+            ))
+        }
+    };
+
+    // Decode payload
+    use base64::Engine;
+    let payload = base64::engine::general_purpose::STANDARD
+        .decode(&request.payload)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid payload encoding: {e}"),
+            )
+        })?;
+
+    // Create transaction
+    let tx_id = TxId::from_content(&payload);
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+
+    let tx = Transaction::new(tx_id, agent_id, ts_ms, kind, Bytes::from(payload));
+
+    // Enqueue transaction
+    state.store.enqueue_tx(&tx).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Storage error: {e}"),
+        )
+    })?;
+
+    info!(tx_id = %tx_id, agent_id = %agent_id, "Transaction enqueued");
+
+    // Trigger processing (fire and forget)
+    let scheduler = state.scheduler.clone();
+    tokio::spawn(async move {
+        if let Err(e) = scheduler.schedule_agent(agent_id).await {
+            error!(error = %e, "Failed to process agent");
+        }
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(SubmitTxResponse {
+            accepted: true,
+            tx_id: tx_id.to_hex(),
+        }),
+    ))
+}
+
+// === Get Head ===
+
+#[derive(Debug, Serialize)]
+pub struct GetHeadResponse {
+    pub agent_id: String,
+    pub head_seq: u64,
+}
+
+#[instrument(skip(state))]
+async fn get_head_handler<S, R>(
+    State(state): State<RouterState<S, R>>,
+    Path(agent_id_hex): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)>
+where
+    S: Store + 'static,
+    R: Reasoner + 'static,
+{
+    let agent_id = AgentId::from_hex(&agent_id_hex)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid agent_id: {e}")))?;
+
+    let head_seq = state.store.get_head_seq(agent_id).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Storage error: {e}"),
+        )
+    })?;
+
+    Ok(Json(GetHeadResponse {
+        agent_id: agent_id_hex,
+        head_seq,
+    }))
+}
+
+// === Scan Record ===
+
+#[derive(Debug, Deserialize)]
+pub struct ScanRecordQuery {
+    #[serde(default = "default_from_seq")]
+    pub from_seq: u64,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+const fn default_from_seq() -> u64 {
+    1
+}
+
+const fn default_limit() -> usize {
+    100
+}
+
+#[instrument(skip(state))]
+async fn scan_record_handler<S, R>(
+    State(state): State<RouterState<S, R>>,
+    Path(agent_id_hex): Path<String>,
+    Query(query): Query<ScanRecordQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)>
+where
+    S: Store + 'static,
+    R: Reasoner + 'static,
+{
+    let agent_id = AgentId::from_hex(&agent_id_hex)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid agent_id: {e}")))?;
+
+    let limit = query.limit.min(1000); // Cap at 1000
+
+    let entries = state
+        .store
+        .scan_record(agent_id, query.from_seq, limit)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Storage error: {e}"),
+            )
+        })?;
+
+    Ok(Json(entries))
+}

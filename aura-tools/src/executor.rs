@@ -1,0 +1,229 @@
+//! Tool executor implementation.
+
+use crate::error::ToolError;
+use crate::fs_tools;
+use crate::sandbox::Sandbox;
+use crate::ToolConfig;
+use async_trait::async_trait;
+use aura_core::{Action, ActionKind, Effect, EffectKind, EffectStatus, ToolCall, ToolResult};
+use aura_executor::{ExecuteContext, Executor};
+use bytes::Bytes;
+use tracing::{debug, error, instrument, warn};
+
+/// Tool executor for filesystem and command operations.
+pub struct ToolExecutor {
+    config: ToolConfig,
+}
+
+impl ToolExecutor {
+    /// Create a new tool executor with the given config.
+    #[must_use]
+    pub const fn new(config: ToolConfig) -> Self {
+        Self { config }
+    }
+
+    /// Create a tool executor with default config.
+    #[must_use]
+    pub fn with_defaults() -> Self {
+        Self::new(ToolConfig::default())
+    }
+
+    /// Execute a tool call.
+    #[instrument(skip(self, ctx), fields(tool = %tool_call.tool))]
+    fn execute_tool(
+        &self,
+        ctx: &ExecuteContext,
+        tool_call: &ToolCall,
+    ) -> Result<ToolResult, ToolError> {
+        let tool = &tool_call.tool;
+
+        // Check if tool is enabled
+        if tool.starts_with("fs.") && !self.config.enable_fs {
+            return Err(ToolError::ToolDisabled(tool.clone()));
+        }
+        if tool.starts_with("cmd.") && !self.config.enable_commands {
+            return Err(ToolError::ToolDisabled(tool.clone()));
+        }
+
+        // Create sandbox for this execution
+        let sandbox = Sandbox::new(&ctx.workspace_root)?;
+
+        match tool.as_str() {
+            "fs.ls" => {
+                let path = tool_call.args["path"]
+                    .as_str()
+                    .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+                fs_tools::fs_ls(&sandbox, path)
+            }
+            "fs.read" => {
+                let path = tool_call.args["path"]
+                    .as_str()
+                    .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+                let max_bytes = tool_call.args["max_bytes"]
+                    .as_u64()
+                    .map_or(self.config.max_read_bytes, |n| {
+                        usize::try_from(n).unwrap_or(usize::MAX)
+                    });
+                let max_bytes = max_bytes.min(self.config.max_read_bytes);
+                fs_tools::fs_read(&sandbox, path, max_bytes)
+            }
+            "fs.stat" => {
+                let path = tool_call.args["path"]
+                    .as_str()
+                    .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+                fs_tools::fs_stat(&sandbox, path)
+            }
+            "cmd.run" => {
+                // Commands are disabled by default and require explicit allowlisting
+                if !self.config.enable_commands {
+                    return Err(ToolError::ToolDisabled("cmd.run".into()));
+                }
+
+                let program = tool_call.args["program"].as_str().ok_or_else(|| {
+                    ToolError::InvalidArguments("missing 'program' argument".into())
+                })?;
+
+                // Check allowlist if not empty
+                if !self.config.command_allowlist.is_empty()
+                    && !self.config.command_allowlist.contains(&program.to_string())
+                {
+                    return Err(ToolError::CommandNotAllowed(program.into()));
+                }
+
+                // For MVP, we don't implement command execution
+                // This would require careful timeout handling and output capture
+                warn!("Command execution not yet implemented");
+                Err(ToolError::ToolDisabled("cmd.run (not implemented)".into()))
+            }
+            _ => Err(ToolError::UnknownTool(tool.clone())),
+        }
+    }
+}
+
+#[async_trait]
+impl Executor for ToolExecutor {
+    #[instrument(skip(self, ctx, action), fields(action_id = %action.action_id))]
+    async fn execute(&self, ctx: &ExecuteContext, action: &Action) -> anyhow::Result<Effect> {
+        // Parse tool call from action payload
+        let tool_call: ToolCall = serde_json::from_slice(&action.payload)
+            .map_err(|e| anyhow::anyhow!("Failed to parse tool call: {e}"))?;
+
+        debug!(?tool_call, "Executing tool");
+
+        match self.execute_tool(ctx, &tool_call) {
+            Ok(result) => {
+                let payload = serde_json::to_vec(&result)?;
+                Ok(Effect::new(
+                    action.action_id,
+                    EffectKind::Agreement,
+                    EffectStatus::Committed,
+                    Bytes::from(payload),
+                ))
+            }
+            Err(e) => {
+                error!(error = %e, "Tool execution failed");
+                let result = ToolResult::failure(&tool_call.tool, e.to_string());
+                let payload = serde_json::to_vec(&result)?;
+                Ok(Effect::new(
+                    action.action_id,
+                    EffectKind::Agreement,
+                    EffectStatus::Failed,
+                    Bytes::from(payload),
+                ))
+            }
+        }
+    }
+
+    fn can_handle(&self, action: &Action) -> bool {
+        // We handle Delegate actions with tool_call payloads
+        if action.kind != ActionKind::Delegate {
+            return false;
+        }
+
+        // Try to parse as ToolCall
+        serde_json::from_slice::<ToolCall>(&action.payload).is_ok()
+    }
+
+    fn name(&self) -> &'static str {
+        "tool"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aura_core::{ActionId, AgentId};
+    use tempfile::TempDir;
+
+    fn create_test_context() -> (ExecuteContext, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let ctx = ExecuteContext::new(
+            AgentId::generate(),
+            ActionId::generate(),
+            dir.path().to_path_buf(),
+        );
+        (ctx, dir)
+    }
+
+    #[tokio::test]
+    async fn test_fs_ls_tool() {
+        let (ctx, dir) = create_test_context();
+        std::fs::write(dir.path().join("test.txt"), "hello").unwrap();
+
+        let executor = ToolExecutor::with_defaults();
+        let tool_call = ToolCall::fs_ls(".");
+        let action = Action::delegate_tool(&tool_call);
+
+        let effect = executor.execute(&ctx, &action).await.unwrap();
+        assert_eq!(effect.status, EffectStatus::Committed);
+
+        let result: ToolResult = serde_json::from_slice(&effect.payload).unwrap();
+        assert!(result.ok);
+        let output = String::from_utf8_lossy(&result.stdout);
+        assert!(output.contains("test.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_fs_read_tool() {
+        let (ctx, dir) = create_test_context();
+        std::fs::write(dir.path().join("test.txt"), "Hello, Aura!").unwrap();
+
+        let executor = ToolExecutor::with_defaults();
+        let tool_call = ToolCall::fs_read("test.txt", None);
+        let action = Action::delegate_tool(&tool_call);
+
+        let effect = executor.execute(&ctx, &action).await.unwrap();
+        assert_eq!(effect.status, EffectStatus::Committed);
+
+        let result: ToolResult = serde_json::from_slice(&effect.payload).unwrap();
+        assert!(result.ok);
+        assert_eq!(&result.stdout[..], b"Hello, Aura!");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_violation() {
+        let (ctx, _dir) = create_test_context();
+
+        let executor = ToolExecutor::with_defaults();
+        let tool_call = ToolCall::fs_read("../../../etc/passwd", None);
+        let action = Action::delegate_tool(&tool_call);
+
+        let effect = executor.execute(&ctx, &action).await.unwrap();
+        assert_eq!(effect.status, EffectStatus::Failed);
+
+        let result: ToolResult = serde_json::from_slice(&effect.payload).unwrap();
+        assert!(!result.ok);
+    }
+
+    #[tokio::test]
+    async fn test_cmd_disabled() {
+        let (ctx, _dir) = create_test_context();
+
+        let executor = ToolExecutor::with_defaults();
+        let tool_call = ToolCall::new("cmd.run", serde_json::json!({"program": "ls"}));
+        let action = Action::delegate_tool(&tool_call);
+
+        let effect = executor.execute(&ctx, &action).await.unwrap();
+        assert_eq!(effect.status, EffectStatus::Failed);
+    }
+}

@@ -1,0 +1,307 @@
+//! Key encoding and decoding for `RocksDB`.
+//!
+//! All keys use big-endian encoding for proper byte ordering.
+
+use aura_core::AgentId;
+
+/// Key prefix bytes.
+pub mod prefix {
+    /// Record entries: `R | agent_id(32) | seq(u64be)`
+    pub const RECORD: u8 = b'R';
+    /// Agent metadata: `M | agent_id(32) | field`
+    pub const AGENT_META: u8 = b'M';
+    /// Inbox: `Q | agent_id(32) | inbox_seq(u64be)`
+    pub const INBOX: u8 = b'Q';
+}
+
+/// Metadata field identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum MetaField {
+    /// Head sequence number
+    HeadSeq = 0,
+    /// Inbox head cursor
+    InboxHead = 1,
+    /// Inbox tail cursor
+    InboxTail = 2,
+    /// Agent status
+    Status = 3,
+    /// Schema version
+    SchemaVersion = 4,
+}
+
+impl MetaField {
+    /// Convert to byte representation.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// Try to parse from byte.
+    #[must_use]
+    pub const fn from_byte(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::HeadSeq),
+            1 => Some(Self::InboxHead),
+            2 => Some(Self::InboxTail),
+            3 => Some(Self::Status),
+            4 => Some(Self::SchemaVersion),
+            _ => None,
+        }
+    }
+}
+
+/// Trait for key encoding/decoding.
+pub trait KeyCodec: Sized {
+    /// Encode to bytes.
+    fn encode(&self) -> Vec<u8>;
+
+    /// Decode from bytes.
+    ///
+    /// # Errors
+    /// Returns error if bytes don't represent a valid key.
+    fn decode(bytes: &[u8]) -> Result<Self, &'static str>;
+}
+
+/// Record key: `R | agent_id(32) | seq(u64be)`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordKey {
+    pub agent_id: AgentId,
+    pub seq: u64,
+}
+
+impl RecordKey {
+    /// Create a new record key.
+    #[must_use]
+    pub const fn new(agent_id: AgentId, seq: u64) -> Self {
+        Self { agent_id, seq }
+    }
+
+    /// Create the start key for scanning an agent's records.
+    #[must_use]
+    pub fn scan_start(agent_id: AgentId) -> Vec<u8> {
+        Self::new(agent_id, 0).encode()
+    }
+
+    /// Create the end key for scanning an agent's records (exclusive).
+    #[must_use]
+    pub fn scan_end(agent_id: AgentId) -> Vec<u8> {
+        Self::new(agent_id, u64::MAX).encode()
+    }
+
+    /// Create a key for scanning from a specific sequence.
+    #[must_use]
+    pub fn scan_from(agent_id: AgentId, from_seq: u64) -> Vec<u8> {
+        Self::new(agent_id, from_seq).encode()
+    }
+}
+
+impl KeyCodec for RecordKey {
+    fn encode(&self) -> Vec<u8> {
+        let mut key = Vec::with_capacity(1 + 32 + 8);
+        key.push(prefix::RECORD);
+        key.extend_from_slice(self.agent_id.as_bytes());
+        key.extend_from_slice(&self.seq.to_be_bytes());
+        key
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
+        if bytes.len() != 1 + 32 + 8 {
+            return Err("invalid record key length");
+        }
+        if bytes[0] != prefix::RECORD {
+            return Err("invalid record key prefix");
+        }
+
+        let agent_bytes: [u8; 32] = bytes[1..33]
+            .try_into()
+            .map_err(|_| "invalid agent_id bytes")?;
+        let seq_bytes: [u8; 8] = bytes[33..41].try_into().map_err(|_| "invalid seq bytes")?;
+
+        Ok(Self {
+            agent_id: AgentId::new(agent_bytes),
+            seq: u64::from_be_bytes(seq_bytes),
+        })
+    }
+}
+
+/// Agent metadata key: `M | agent_id(32) | field`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentMetaKey {
+    pub agent_id: AgentId,
+    pub field: MetaField,
+}
+
+impl AgentMetaKey {
+    /// Create a new agent metadata key.
+    #[must_use]
+    pub const fn new(agent_id: AgentId, field: MetaField) -> Self {
+        Self { agent_id, field }
+    }
+
+    /// Create a `head_seq` key.
+    #[must_use]
+    pub const fn head_seq(agent_id: AgentId) -> Self {
+        Self::new(agent_id, MetaField::HeadSeq)
+    }
+
+    /// Create an `inbox_head` key.
+    #[must_use]
+    pub const fn inbox_head(agent_id: AgentId) -> Self {
+        Self::new(agent_id, MetaField::InboxHead)
+    }
+
+    /// Create an `inbox_tail` key.
+    #[must_use]
+    pub const fn inbox_tail(agent_id: AgentId) -> Self {
+        Self::new(agent_id, MetaField::InboxTail)
+    }
+
+    /// Create a status key.
+    #[must_use]
+    pub const fn status(agent_id: AgentId) -> Self {
+        Self::new(agent_id, MetaField::Status)
+    }
+}
+
+impl KeyCodec for AgentMetaKey {
+    fn encode(&self) -> Vec<u8> {
+        let mut key = Vec::with_capacity(1 + 32 + 1);
+        key.push(prefix::AGENT_META);
+        key.extend_from_slice(self.agent_id.as_bytes());
+        key.push(self.field.as_byte());
+        key
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
+        if bytes.len() != 1 + 32 + 1 {
+            return Err("invalid agent meta key length");
+        }
+        if bytes[0] != prefix::AGENT_META {
+            return Err("invalid agent meta key prefix");
+        }
+
+        let agent_bytes: [u8; 32] = bytes[1..33]
+            .try_into()
+            .map_err(|_| "invalid agent_id bytes")?;
+        let field = MetaField::from_byte(bytes[33]).ok_or("invalid meta field")?;
+
+        Ok(Self {
+            agent_id: AgentId::new(agent_bytes),
+            field,
+        })
+    }
+}
+
+/// Inbox key: `Q | agent_id(32) | inbox_seq(u64be)`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InboxKey {
+    pub agent_id: AgentId,
+    pub inbox_seq: u64,
+}
+
+impl InboxKey {
+    /// Create a new inbox key.
+    #[must_use]
+    pub const fn new(agent_id: AgentId, inbox_seq: u64) -> Self {
+        Self {
+            agent_id,
+            inbox_seq,
+        }
+    }
+
+    /// Create the start key for scanning an agent's inbox.
+    #[must_use]
+    pub fn scan_start(agent_id: AgentId) -> Vec<u8> {
+        Self::new(agent_id, 0).encode()
+    }
+
+    /// Create the end key for scanning an agent's inbox (exclusive).
+    #[must_use]
+    pub fn scan_end(agent_id: AgentId) -> Vec<u8> {
+        Self::new(agent_id, u64::MAX).encode()
+    }
+}
+
+impl KeyCodec for InboxKey {
+    fn encode(&self) -> Vec<u8> {
+        let mut key = Vec::with_capacity(1 + 32 + 8);
+        key.push(prefix::INBOX);
+        key.extend_from_slice(self.agent_id.as_bytes());
+        key.extend_from_slice(&self.inbox_seq.to_be_bytes());
+        key
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
+        if bytes.len() != 1 + 32 + 8 {
+            return Err("invalid inbox key length");
+        }
+        if bytes[0] != prefix::INBOX {
+            return Err("invalid inbox key prefix");
+        }
+
+        let agent_bytes: [u8; 32] = bytes[1..33]
+            .try_into()
+            .map_err(|_| "invalid agent_id bytes")?;
+        let seq_bytes: [u8; 8] = bytes[33..41]
+            .try_into()
+            .map_err(|_| "invalid inbox_seq bytes")?;
+
+        Ok(Self {
+            agent_id: AgentId::new(agent_bytes),
+            inbox_seq: u64::from_be_bytes(seq_bytes),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn record_key_roundtrip() {
+        let agent = AgentId::generate();
+        let key = RecordKey::new(agent, 42);
+        let encoded = key.encode();
+        let decoded = RecordKey::decode(&encoded).unwrap();
+        assert_eq!(key, decoded);
+    }
+
+    #[test]
+    fn record_key_ordering() {
+        let agent = AgentId::new([1u8; 32]);
+        let key1 = RecordKey::new(agent, 1).encode();
+        let key2 = RecordKey::new(agent, 2).encode();
+        let key10 = RecordKey::new(agent, 10).encode();
+
+        assert!(key1 < key2);
+        assert!(key2 < key10);
+    }
+
+    #[test]
+    fn agent_meta_key_roundtrip() {
+        let agent = AgentId::generate();
+        let key = AgentMetaKey::head_seq(agent);
+        let encoded = key.encode();
+        let decoded = AgentMetaKey::decode(&encoded).unwrap();
+        assert_eq!(key, decoded);
+    }
+
+    #[test]
+    fn inbox_key_roundtrip() {
+        let agent = AgentId::generate();
+        let key = InboxKey::new(agent, 100);
+        let encoded = key.encode();
+        let decoded = InboxKey::decode(&encoded).unwrap();
+        assert_eq!(key, decoded);
+    }
+
+    #[test]
+    fn inbox_key_ordering() {
+        let agent = AgentId::new([2u8; 32]);
+        let key1 = InboxKey::new(agent, 1).encode();
+        let key2 = InboxKey::new(agent, 2).encode();
+
+        assert!(key1 < key2);
+    }
+}
