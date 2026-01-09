@@ -280,7 +280,7 @@ impl ToolChoice {
 /// Request to the model.
 #[derive(Debug, Clone)]
 pub struct ModelRequest {
-    /// Model identifier (e.g., "claude-sonnet-4-20250514")
+    /// Model identifier (e.g., "claude-opus-4-5-20251101")
     pub model: String,
     /// System prompt
     pub system: String,

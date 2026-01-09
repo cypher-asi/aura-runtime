@@ -48,7 +48,7 @@ impl AnthropicConfig {
             .map_err(|_| anyhow::anyhow!("AURA_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY not set"))?;
 
         let default_model = std::env::var("AURA_ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+            .unwrap_or_else(|_| "claude-opus-4-5-20251101".to_string());
 
         let timeout_ms = std::env::var("AURA_MODEL_TIMEOUT_MS")
             .ok()
