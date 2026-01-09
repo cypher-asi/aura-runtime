@@ -38,6 +38,12 @@ pub enum UiEvent {
 
     /// User requested a new session (reset context)
     NewSession,
+
+    /// User selected a different agent
+    SelectAgent(String),
+
+    /// User requested the agent list
+    RefreshAgents,
 }
 
 /// Commands sent from the application logic to the UI.
@@ -46,8 +52,15 @@ pub enum UiCommand {
     /// Set the status message
     SetStatus(String),
 
-    /// Append text to the current streaming message
+    /// Append text to the current streaming message.
+    /// This is used for real-time streaming output from the model.
     AppendText(String),
+
+    /// Start a new streaming message (clears any pending streaming content).
+    StartStreaming,
+
+    /// Finalize the streaming message and display it.
+    FinishStreaming,
 
     /// Show a new message
     ShowMessage(MessageData),
@@ -92,6 +105,15 @@ pub enum UiCommand {
 
     /// A new record was added to the kernel
     NewRecord(RecordSummary),
+
+    /// Update the list of agents in the swarm
+    SetAgents(Vec<AgentSummary>),
+
+    /// Set the currently active agent
+    SetActiveAgent(String),
+
+    /// Clear records (when switching agents)
+    ClearRecords,
 }
 
 /// Data for displaying a message.
@@ -148,6 +170,23 @@ pub struct RecordSummary {
     pub action_count: usize,
     /// Effect status summary (e.g., "2 ok", "1 ok, 1 failed")
     pub effect_status: String,
+}
+
+/// Summary of an agent for display in the Swarm panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSummary {
+    /// Agent ID (hex encoded)
+    pub id: String,
+    /// Display name
+    pub name: String,
+    /// ZNS identifier (e.g., "0://Agent09")
+    pub zns_id: String,
+    /// Whether this agent is currently active
+    pub is_active: bool,
+    /// Number of records for this agent
+    pub record_count: u64,
+    /// Last activity timestamp (HH:MM:SS or date)
+    pub last_active: String,
 }
 
 #[cfg(test)]

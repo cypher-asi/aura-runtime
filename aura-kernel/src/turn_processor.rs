@@ -28,9 +28,10 @@ use aura_core::{
 };
 use aura_executor::{ExecuteContext, ExecutorRouter};
 use aura_reasoner::{
-    ContentBlock, Message, ModelProvider, ModelRequest, ModelResponse, StopReason, ToolDefinition,
-    ToolResultContent,
+    ContentBlock, Message, ModelProvider, ModelRequest, ModelResponse, StopReason,
+    StreamAccumulator, StreamEvent, ToolDefinition, ToolResultContent,
 };
+use futures_util::StreamExt;
 use aura_store::Store;
 use aura_tools::ToolRegistry;
 use bytes::Bytes;
@@ -123,6 +124,28 @@ pub struct TurnResult {
     pub had_failures: bool,
 }
 
+/// Callback type for streaming text events.
+///
+/// This callback is invoked whenever a text delta is received from the model,
+/// allowing real-time display of the response as it's generated.
+pub type StreamCallback = Box<dyn Fn(StreamCallbackEvent) + Send + Sync>;
+
+/// Events that can be sent via the streaming callback.
+#[derive(Debug, Clone)]
+pub enum StreamCallbackEvent {
+    /// A chunk of text was received
+    TextDelta(String),
+    /// A tool use started
+    ToolStart {
+        /// Tool use ID
+        id: String,
+        /// Tool name
+        name: String,
+    },
+    /// Streaming is complete for this step
+    StepComplete,
+}
+
 /// A single step entry in a turn.
 #[derive(Debug, Clone)]
 pub struct TurnEntry {
@@ -145,6 +168,11 @@ pub struct TurnEntry {
 /// The Turn Processor implements the core agentic loop where the model
 /// can propose tool uses, receive results, and continue until it decides
 /// to end the turn.
+///
+/// ## Streaming
+///
+/// Set a streaming callback via `with_stream_callback()` to receive real-time
+/// text updates as the model generates its response.
 pub struct TurnProcessor<P, S, R>
 where
     P: ModelProvider,
@@ -157,6 +185,8 @@ where
     policy: Policy,
     tool_registry: Arc<R>,
     config: TurnConfig,
+    /// Optional callback for streaming text events
+    stream_callback: Option<Arc<StreamCallback>>,
 }
 
 impl<P, S, R> TurnProcessor<P, S, R>
@@ -182,6 +212,7 @@ where
             policy,
             tool_registry,
             config,
+            stream_callback: None,
         }
     }
 
@@ -190,6 +221,33 @@ where
     pub fn with_policy(mut self, policy_config: PolicyConfig) -> Self {
         self.policy = Policy::new(policy_config);
         self
+    }
+
+    /// Set a callback for streaming text events.
+    ///
+    /// The callback will be invoked for each text delta received from the model,
+    /// allowing real-time display of the response.
+    #[must_use]
+    pub fn with_stream_callback(mut self, callback: StreamCallback) -> Self {
+        self.stream_callback = Some(Arc::new(callback));
+        self
+    }
+
+    /// Set a callback for streaming text events (arc version).
+    pub fn set_stream_callback(&mut self, callback: Arc<StreamCallback>) {
+        self.stream_callback = Some(callback);
+    }
+
+    /// Clear the streaming callback.
+    pub fn clear_stream_callback(&mut self) {
+        self.stream_callback = None;
+    }
+
+    /// Emit a streaming event to the callback (if set).
+    fn emit_stream_event(&self, event: StreamCallbackEvent) {
+        if let Some(callback) = &self.stream_callback {
+            callback(event);
+        }
     }
 
     /// Get the workspace path for an agent.
@@ -268,7 +326,23 @@ where
 
         // Append current user prompt
         let prompt = String::from_utf8_lossy(&tx.payload);
+        debug!(
+            current_prompt = %prompt,
+            history_count = messages.len(),
+            "Building messages for model"
+        );
         messages.push(Message::user(prompt.to_string()));
+
+        // Log all messages being sent
+        for (i, msg) in messages.iter().enumerate() {
+            let content_preview: String = msg.text_content().chars().take(50).collect();
+            debug!(
+                idx = i,
+                role = ?msg.role,
+                content_preview = %content_preview,
+                "Message in context"
+            );
+        }
 
         messages
     }
@@ -322,7 +396,11 @@ where
                     aura_reasoner::Usage::default(),
                     aura_reasoner::ProviderTrace::new("replay", 0),
                 )
+            } else if self.stream_callback.is_some() {
+                // Use streaming completion with callback
+                self.complete_with_streaming(request).await?
             } else {
+                // Use non-streaming completion
                 self.provider.complete(request).await?
             };
 
@@ -417,6 +495,69 @@ where
             steps,
             had_failures,
         })
+    }
+
+    /// Complete a model request with streaming, emitting events to the callback.
+    async fn complete_with_streaming(&self, request: ModelRequest) -> anyhow::Result<ModelResponse> {
+        let start = std::time::Instant::now();
+
+        // Get the streaming response
+        let mut stream = self.provider.complete_streaming(request).await?;
+
+        // Accumulate the response while emitting text deltas
+        let mut accumulator = StreamAccumulator::new();
+        let input_tokens = 0u32;
+
+        while let Some(event_result) = stream.next().await {
+            match event_result {
+                Ok(event) => {
+                    // Emit text deltas to the callback
+                    match &event {
+                        StreamEvent::TextDelta { text } => {
+                            self.emit_stream_event(StreamCallbackEvent::TextDelta(text.clone()));
+                        }
+                        StreamEvent::ContentBlockStart {
+                            content_type: aura_reasoner::StreamContentType::ToolUse { id, name },
+                            ..
+                        } => {
+                            self.emit_stream_event(StreamCallbackEvent::ToolStart {
+                                id: id.clone(),
+                                name: name.clone(),
+                            });
+                        }
+                        StreamEvent::MessageStart { .. } => {
+                            // Could track input tokens from usage here
+                            // For now, we'll estimate from the accumulator
+                        }
+                        StreamEvent::Error { message } => {
+                            error!(error = %message, "Stream error from provider");
+                            anyhow::bail!("Stream error: {message}");
+                        }
+                        _ => {}
+                    }
+
+                    // Process the event to build the final response
+                    accumulator.process(&event);
+
+                    // Check for terminal events
+                    if matches!(event, StreamEvent::MessageStop) {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    error!(error = %e, "Stream error");
+                    anyhow::bail!("Stream error: {e}");
+                }
+            }
+        }
+
+        // Signal step completion
+        self.emit_stream_event(StreamCallbackEvent::StepComplete);
+
+        let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+        // Convert accumulated state to a ModelResponse
+        accumulator.into_response(input_tokens, latency_ms)
     }
 
     /// Execute tool calls from a model message.

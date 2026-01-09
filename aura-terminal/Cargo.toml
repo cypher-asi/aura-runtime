@@ -31,6 +31,9 @@ aura-core = { path = "../aura-core" }
 # Tracing
 tracing = { workspace = true }
 
+# Unicode display width
+unicode-width = "0.2"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

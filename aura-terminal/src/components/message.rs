@@ -71,9 +71,20 @@ impl Message {
         self.is_streaming = streaming;
     }
 
+    /// Check if the message is still streaming.
+    #[must_use]
+    pub const fn is_streaming(&self) -> bool {
+        self.is_streaming
+    }
+
     /// Append content to the message.
     pub fn append(&mut self, text: &str) {
         self.content.push_str(text);
+    }
+
+    /// Set the message content (replaces existing content).
+    pub fn set_content(&mut self, content: &str) {
+        self.content = content.to_string();
     }
 
     /// Render the message.

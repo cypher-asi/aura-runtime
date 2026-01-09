@@ -7,11 +7,189 @@ use crate::{
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
+
+// ============================================================================
+// Markdown Parsing
+// ============================================================================
+
+/// Parse markdown text and return styled spans (with owned strings).
+/// Supports: **bold**, *italic*, `code`, headers (#), lists (- *), blockquotes (>)
+fn parse_markdown_line(text: &str, base_style: Style, theme: &Theme) -> Vec<Span<'static>> {
+    // Check for line-level formatting first
+    let trimmed = text.trim_start();
+    
+    // Headers: # ## ###
+    if trimmed.starts_with("# ") {
+        return vec![Span::styled(
+            text.to_string(),
+            base_style.add_modifier(Modifier::BOLD),
+        )];
+    }
+    if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
+        return vec![Span::styled(
+            text.to_string(),
+            base_style.add_modifier(Modifier::BOLD),
+        )];
+    }
+    
+    // Blockquotes: > text
+    if trimmed.starts_with("> ") {
+        return vec![Span::styled(
+            text.to_string(),
+            base_style.fg(theme.colors.secondary).add_modifier(Modifier::ITALIC),
+        )];
+    }
+    
+    // List items: - item or * item
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        let indent = text.len() - trimmed.len();
+        let bullet_span = Span::styled(
+            format!("{}• ", " ".repeat(indent)),
+            base_style.fg(theme.colors.primary),
+        );
+        let rest = &trimmed[2..];
+        let mut result = vec![bullet_span];
+        result.extend(parse_markdown_inline(rest, base_style, theme));
+        return result;
+    }
+    
+    // Numbered lists: 1. 2. etc
+    if let Some(dot_pos) = trimmed.find(". ") {
+        if dot_pos <= 3 && trimmed[..dot_pos].chars().all(|c| c.is_ascii_digit()) {
+            let indent = text.len() - trimmed.len();
+            let number = &trimmed[..dot_pos + 1];
+            let number_span = Span::styled(
+                format!("{}{} ", " ".repeat(indent), number),
+                base_style.fg(theme.colors.primary),
+            );
+            let rest = &trimmed[dot_pos + 2..];
+            let mut result = vec![number_span];
+            result.extend(parse_markdown_inline(rest, base_style, theme));
+            return result;
+        }
+    }
+    
+    // Regular line - parse inline formatting
+    parse_markdown_inline(text, base_style, theme)
+}
+
+/// Parse inline markdown formatting: **bold**, *italic*, `code`
+fn parse_markdown_inline(text: &str, base_style: Style, theme: &Theme) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut remaining = text;
+    
+    while !remaining.is_empty() {
+        // Try to find the next formatting marker
+        let next_marker = find_next_marker(remaining);
+        
+        match next_marker {
+            Some((start, marker_type, marker_len)) => {
+                // Add text before the marker
+                if start > 0 {
+                    spans.push(Span::styled(remaining[..start].to_string(), base_style));
+                }
+                
+                // Find the closing marker
+                let after_open = &remaining[start + marker_len..];
+                let close_marker = match marker_type {
+                    MarkerType::Bold => "**",
+                    MarkerType::Italic => "*",
+                    MarkerType::Code => "`",
+                };
+                
+                if let Some(close_pos) = after_open.find(close_marker) {
+                    let content = &after_open[..close_pos];
+                    let styled_content = match marker_type {
+                        MarkerType::Bold => Span::styled(
+                            content.to_string(),
+                            base_style.add_modifier(Modifier::BOLD),
+                        ),
+                        MarkerType::Italic => Span::styled(
+                            content.to_string(),
+                            base_style.add_modifier(Modifier::ITALIC),
+                        ),
+                        MarkerType::Code => Span::styled(
+                            content.to_string(),
+                            Style::default()
+                                .fg(theme.colors.warning)
+                                .bg(Color::Rgb(40, 40, 40)),
+                        ),
+                    };
+                    spans.push(styled_content);
+                    remaining = &after_open[close_pos + close_marker.len()..];
+                } else {
+                    // No closing marker - treat as regular text
+                    spans.push(Span::styled(remaining[..start + marker_len].to_string(), base_style));
+                    remaining = &remaining[start + marker_len..];
+                }
+            }
+            None => {
+                // No more markers - add remaining text
+                spans.push(Span::styled(remaining.to_string(), base_style));
+                break;
+            }
+        }
+    }
+    
+    if spans.is_empty() {
+        spans.push(Span::styled(String::new(), base_style));
+    }
+    
+    spans
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MarkerType {
+    Bold,   // **
+    Italic, // *
+    Code,   // `
+}
+
+/// Find the next markdown marker in text
+fn find_next_marker(text: &str) -> Option<(usize, MarkerType, usize)> {
+    let mut best: Option<(usize, MarkerType, usize)> = None;
+    
+    // Find ** (bold) - must check before * (italic)
+    if let Some(pos) = text.find("**") {
+        best = Some((pos, MarkerType::Bold, 2));
+    }
+    
+    // Find * (italic) - only if not part of **
+    for (i, c) in text.char_indices() {
+        if c == '*' {
+            // Check it's not part of **
+            let is_double = text[i..].starts_with("**");
+            let prev_is_star = i > 0 && text.as_bytes().get(i - 1) == Some(&b'*');
+            
+            if !is_double && !prev_is_star {
+                let italic_pos = i;
+                match best {
+                    Some((best_pos, _, _)) if best_pos <= italic_pos => {}
+                    _ => best = Some((italic_pos, MarkerType::Italic, 1)),
+                }
+                break;
+            }
+        }
+    }
+    
+    // Find ` (code)
+    if let Some(pos) = text.find('`') {
+        // Skip ``` code blocks (they're handled at line level)
+        if !text[pos..].starts_with("```") {
+            match best {
+                Some((best_pos, _, _)) if best_pos <= pos => {}
+                _ => best = Some((pos, MarkerType::Code, 1)),
+            }
+        }
+    }
+    
+    best
+}
 
 /// Render the full application UI in IRC style.
 pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
@@ -22,7 +200,7 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Header (with padding)
-            Constraint::Min(3),    // Content area (Chat panel + optional Record panel)
+            Constraint::Min(3),    // Content area (panels)
             Constraint::Length(1), // Input line (with status on right)
         ])
         .split(area);
@@ -30,29 +208,75 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
     // Render header
     render_header(frame, main_chunks[0], theme);
 
-    // Render panels based on Record panel visibility
-    if app.record_panel_visible() {
-        // Split content area horizontally: Chat panel (65%) | Record panel (35%)
-        let content_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(65), // Chat panel
-                Constraint::Percentage(35), // Record panel
-            ])
-            .split(main_chunks[1]);
+    // Render panels based on visibility
+    // Layout: [Swarm (optional)] | Chat | [Record (optional)]
+    render_content_panels(frame, main_chunks[1], app, theme);
 
-        render_chat_panel(frame, content_chunks[0], app, theme);
-        render_record_panel(frame, content_chunks[1], app, theme);
+    // Calculate input offset to align with chat panel when swarm is open
+    let swarm_offset = if app.swarm_panel_visible() {
+        // Match the swarm panel width percentages from render_content_panels
+        let swarm_percent = if app.record_panel_visible() { 20 } else { 25 };
+        (main_chunks[2].width as u32 * swarm_percent / 100) as u16
     } else {
-        // Only Chat panel (full width)
-        render_chat_panel(frame, main_chunks[1], app, theme);
-    }
+        0
+    };
 
-    // Render input line with status on right
-    render_input(frame, main_chunks[2], app, theme);
+    // Render input line with status on right, offset to align with chat panel
+    render_input(frame, main_chunks[2], app, theme, swarm_offset);
 
     // Render overlays (approval modal, help, record detail)
     render_overlays(frame, app, theme);
+}
+
+/// Render the content panels (Swarm, Chat, Record) based on visibility.
+fn render_content_panels(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let swarm_visible = app.swarm_panel_visible();
+    let record_visible = app.record_panel_visible();
+
+    match (swarm_visible, record_visible) {
+        (true, true) => {
+            // All three panels: Swarm (20%) | Chat (50%) | Record (30%)
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(20),
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(30),
+                ])
+                .split(area);
+            render_swarm_panel(frame, chunks[0], app, theme);
+            render_chat_panel(frame, chunks[1], app, theme);
+            render_record_panel(frame, chunks[2], app, theme);
+        }
+        (true, false) => {
+            // Swarm + Chat: Swarm (25%) | Chat (75%)
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(75),
+                ])
+                .split(area);
+            render_swarm_panel(frame, chunks[0], app, theme);
+            render_chat_panel(frame, chunks[1], app, theme);
+        }
+        (false, true) => {
+            // Chat + Record: Chat (65%) | Record (35%)
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(65),
+                    Constraint::Percentage(35),
+                ])
+                .split(area);
+            render_chat_panel(frame, chunks[0], app, theme);
+            render_record_panel(frame, chunks[1], app, theme);
+        }
+        (false, false) => {
+            // Only Chat panel (full width)
+            render_chat_panel(frame, area, app, theme);
+        }
+    }
 }
 
 /// Render the header bar.
@@ -112,11 +336,11 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
     for message in messages.iter().skip(app.scroll_offset()) {
         // Format: [HH:MM:SS] <NICK> message
-        // User: <YOU> in white, message in light gray
-        // AURA: <AURA> in white, message in neon cyan
+        // User: <YOU> in white, message in neon cyan
+        // AURA: <AURA> in white, message in gray
         let (nick, nick_color, msg_color) = match message.role() {
-            MessageRole::User => ("YOU", theme.colors.foreground, theme.colors.muted),
-            MessageRole::Assistant => ("AURA", theme.colors.foreground, theme.colors.primary),
+            MessageRole::User => ("YOU", theme.colors.foreground, theme.colors.primary),
+            MessageRole::Assistant => ("AURA", theme.colors.foreground, theme.colors.muted),
             MessageRole::System => ("*", theme.colors.muted, theme.colors.muted),
         };
 
@@ -155,26 +379,37 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             let wrap_width = if is_first_output_line { first_line_width } else { continuation_width };
             let wrapped = wrap_words(content_line, wrap_width);
 
+            // Check if this is a code block marker
+            let is_code_block = content_line.trim().starts_with("```");
+            
             for wrapped_line in wrapped {
+                // Parse markdown for assistant messages (they may contain formatting)
+                let base_style = Style::default().fg(msg_color);
+                let content_spans = if message.role() == MessageRole::Assistant && !is_code_block {
+                    parse_markdown_line(&wrapped_line, base_style, theme)
+                } else {
+                    vec![Span::styled(wrapped_line, base_style)]
+                };
+                
                 if is_first_output_line {
                     // First line of first content line: include timestamp and nick
-                    lines.push(Line::from(vec![
+                    let mut line_spans = vec![
                         Span::styled(
                             format!("[{timestamp}] "),
                             Style::default().fg(theme.colors.muted),
                         ),
                         Span::styled(format!("<{nick}>"), Style::default().fg(nick_color)),
                         Span::raw(" "),
-                        Span::styled(wrapped_line, Style::default().fg(msg_color)),
-                    ]));
+                    ];
+                    line_spans.extend(content_spans);
+                    lines.push(Line::from(line_spans));
                     is_first_output_line = false;
                 } else {
                     // Continuation: indent to align with message text
                     let indent = " ".repeat(prefix_width);
-                    lines.push(Line::from(vec![
-                        Span::raw(indent),
-                        Span::styled(wrapped_line, Style::default().fg(msg_color)),
-                    ]));
+                    let mut line_spans = vec![Span::raw(indent)];
+                    line_spans.extend(content_spans);
+                    lines.push(Line::from(line_spans));
                 }
             }
         }
@@ -189,7 +424,13 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     frame.render_widget(paragraph, padded);
 }
 
-/// Wrap text at word boundaries to fit within max_width.
+/// Calculate the display width of a string (accounting for Unicode characters).
+fn display_width(s: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    UnicodeWidthStr::width(s)
+}
+
+/// Wrap text at word boundaries to fit within max_width (display width).
 /// Returns a vector of lines, each fitting within the width.
 fn wrap_words(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
@@ -201,55 +442,63 @@ fn wrap_words(text: &str, max_width: usize) -> Vec<String> {
     let mut current_width = 0;
 
     for word in text.split_whitespace() {
-        let word_len = word.chars().count();
+        let word_width = display_width(word);
 
         if current_width == 0 {
             // First word on line
-            if word_len > max_width {
-                // Word is longer than max_width, need to break it
-                let mut chars = word.chars().peekable();
-                while chars.peek().is_some() {
-                    let chunk: String = chars.by_ref().take(max_width).collect();
-                    if chars.peek().is_some() {
-                        // More chars remaining, push this chunk as complete line
-                        lines.push(chunk);
-                    } else {
-                        // Last chunk, make it the current line
-                        current_width = chunk.chars().count();
-                        current_line = chunk;
+            if word_width > max_width {
+                // Word is longer than max_width, need to break it by character
+                let mut chunk = String::new();
+                let mut chunk_width = 0;
+                for c in word.chars() {
+                    use unicode_width::UnicodeWidthChar;
+                    let char_width = c.width().unwrap_or(1);
+                    if chunk_width + char_width > max_width && !chunk.is_empty() {
+                        lines.push(std::mem::take(&mut chunk));
+                        chunk_width = 0;
                     }
+                    chunk.push(c);
+                    chunk_width += char_width;
+                }
+                if !chunk.is_empty() {
+                    current_line = chunk;
+                    current_width = display_width(&current_line);
                 }
             } else {
                 current_line = word.to_string();
-                current_width = word_len;
+                current_width = word_width;
             }
-        } else if current_width + 1 + word_len <= max_width {
+        } else if current_width + 1 + word_width <= max_width {
             // Word fits on current line with space
             current_line.push(' ');
             current_line.push_str(word);
-            current_width += 1 + word_len;
+            current_width += 1 + word_width;
         } else {
             // Word doesn't fit, start new line
             lines.push(std::mem::take(&mut current_line));
             current_width = 0;
 
-            if word_len > max_width {
-                // Word is longer than max_width, need to break it
-                let mut chars = word.chars().peekable();
-                while chars.peek().is_some() {
-                    let chunk: String = chars.by_ref().take(max_width).collect();
-                    if chars.peek().is_some() {
-                        // More chars remaining, push this chunk as complete line
-                        lines.push(chunk);
-                    } else {
-                        // Last chunk, make it the current line
-                        current_width = chunk.chars().count();
-                        current_line = chunk;
+            if word_width > max_width {
+                // Word is longer than max_width, need to break it by character
+                let mut chunk = String::new();
+                let mut chunk_width = 0;
+                for c in word.chars() {
+                    use unicode_width::UnicodeWidthChar;
+                    let char_width = c.width().unwrap_or(1);
+                    if chunk_width + char_width > max_width && !chunk.is_empty() {
+                        lines.push(std::mem::take(&mut chunk));
+                        chunk_width = 0;
                     }
+                    chunk.push(c);
+                    chunk_width += char_width;
+                }
+                if !chunk.is_empty() {
+                    current_line = chunk;
+                    current_width = display_width(&current_line);
                 }
             } else {
                 current_line = word.to_string();
-                current_width = word_len;
+                current_width = word_width;
             }
         }
     }
@@ -265,6 +514,115 @@ fn wrap_words(text: &str, max_width: usize) -> Vec<String> {
     }
 
     lines
+}
+
+/// Render the Swarm panel (agent list).
+fn render_swarm_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    let is_focused = app.focus() == PanelFocus::Swarm;
+    let border_color = if is_focused {
+        theme.colors.primary
+    } else {
+        theme.colors.muted
+    };
+
+    let block = Block::default()
+        .title(" Swarm ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let agents = app.agents();
+
+    if agents.is_empty() {
+        let empty_msg = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No agents.",
+                Style::default().fg(theme.colors.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Use /swarm to",
+                Style::default().fg(theme.colors.muted),
+            )),
+            Line::from(Span::styled(
+                "  manage agents.",
+                Style::default().fg(theme.colors.muted),
+            )),
+        ];
+        let paragraph = Paragraph::new(empty_msg);
+        frame.render_widget(paragraph, inner);
+        return;
+    }
+
+    // Build agent list - one line per agent
+    let selected = app.selected_agent();
+    let active_id = app.active_agent_id();
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, agent) in agents.iter().enumerate() {
+        let is_selected = i == selected;
+        let is_active = agent.id == active_id;
+
+        // Show active agent with a bullet, selected with >
+        let prefix = if is_selected && is_focused {
+            ">"
+        } else if is_active {
+            "●"
+        } else {
+            " "
+        };
+
+        let line_style = if is_selected && is_focused {
+            Style::default()
+                .fg(theme.colors.primary)
+                .add_modifier(Modifier::BOLD)
+        } else if is_active {
+            Style::default().fg(theme.colors.secondary)
+        } else {
+            Style::default().fg(theme.colors.muted)
+        };
+
+        // Truncate name to fit panel width (using display width)
+        let max_name_width = inner.width.saturating_sub(4) as usize;
+        let display_name = if display_width(&agent.name) > max_name_width {
+            // Truncate by display width, not bytes
+            let mut truncated = String::new();
+            let mut width = 0;
+            for c in agent.name.chars() {
+                use unicode_width::UnicodeWidthChar;
+                let char_width = c.width().unwrap_or(1);
+                if width + char_width >= max_name_width {
+                    break;
+                }
+                truncated.push(c);
+                width += char_width;
+            }
+            format!("{truncated}…")
+        } else {
+            agent.name.clone()
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(format!("{prefix} "), line_style),
+            Span::styled(display_name, line_style),
+        ]));
+    }
+
+    // Handle scrolling
+    let visible_height = inner.height as usize;
+    let scroll = if selected >= visible_height {
+        selected.saturating_sub(visible_height / 2)
+    } else {
+        0
+    };
+
+    let visible_lines: Vec<Line> = lines.into_iter().skip(scroll).collect();
+
+    let paragraph = Paragraph::new(visible_lines);
+    frame.render_widget(paragraph, inner);
 }
 
 /// Render the Record panel.
@@ -357,7 +715,8 @@ fn render_record_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
 }
 
 /// Render input line with status on the right.
-fn render_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+/// `left_offset` shifts the input area to align with the chat panel when swarm is visible.
+fn render_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, left_offset: u16) {
     let input = app.input();
     let cursor_pos = app.cursor_pos();
 
@@ -387,11 +746,11 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         "◐"
     };
     let status_text = format!("{} {}", status_icon, status);
-    // Use char count, not byte length (unicode chars like ⠙ are multi-byte)
-    let status_len = status_text.chars().count() as u16;
+    // Use display width for proper Unicode handling
+    let status_len = display_width(&status_text) as u16;
 
-    // Calculate available width for input (leave space for status on right)
-    let input_width = area.width.saturating_sub(status_len + 2);
+    // Calculate available width for input (leave space for status on right, and apply offset)
+    let input_width = area.width.saturating_sub(status_len + 2 + left_offset);
 
     // Render status on the right
     let status_area = Rect {
@@ -404,10 +763,12 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     frame.render_widget(Paragraph::new(status_line), status_area);
 
     // Build input line (no fake cursor - we use the real terminal cursor)
+    // Only apply chat_padding when swarm panel is visible (left_offset > 0) to align with chat content
+    let chat_padding: u16 = if left_offset > 0 { 3 } else { 0 };
     let input_area = Rect {
-        x: area.x,
+        x: area.x + left_offset + chat_padding,
         y: area.y,
-        width: input_width,
+        width: input_width.saturating_sub(chat_padding),
         height: 1,
     };
 
@@ -418,11 +779,11 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
     frame.render_widget(Paragraph::new(content), input_area);
 
-    // Only show the blinking cursor when ready for input (not during thinking)
-    if is_ready {
-        // Position the native terminal cursor (it blinks automatically)
-        // Prompt "> " is 2 chars, then cursor_pos chars into the input
-        let cursor_x = area.x + 2 + cursor_pos as u16;
+    // Only show cursor when not thinking (user can't type during processing)
+    // Position the cursor in the input area, not at the status
+    if !is_thinking {
+        // Apply left_offset + chat_padding, prompt "> " is 2 chars, then cursor_pos chars into input
+        let cursor_x = area.x + left_offset + chat_padding + 2 + cursor_pos as u16;
         let cursor_y = area.y;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
@@ -516,6 +877,14 @@ fn render_help_overlay(frame: &mut Frame, theme: &Theme) {
             Style::default().fg(theme.colors.foreground),
         )),
         Line::from(Span::styled(
+            "/new       New session",
+            Style::default().fg(theme.colors.foreground),
+        )),
+        Line::from(Span::styled(
+            "/swarm     Toggle Swarm panel",
+            Style::default().fg(theme.colors.foreground),
+        )),
+        Line::from(Span::styled(
             "/record    Toggle Record panel",
             Style::default().fg(theme.colors.foreground),
         )),
@@ -571,7 +940,7 @@ fn render_record_detail(frame: &mut Frame, app: &App, theme: &Theme) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.colors.primary));
 
-    let content = vec![
+    let mut content = vec![
         Line::from(vec![
             Span::styled("Sequence:  ", Style::default().fg(theme.colors.muted)),
             Span::styled(
@@ -612,16 +981,24 @@ fn render_record_detail(frame: &mut Frame, app: &App, theme: &Theme) {
         ]),
         Line::from(""),
         Line::from(Span::styled("Message:", Style::default().fg(theme.colors.muted))),
-        Line::from(Span::styled(
-            &record.message,
-            Style::default().fg(theme.colors.foreground),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press Esc or Enter to close",
-            Style::default().fg(theme.colors.muted),
-        )),
     ];
+
+    // Parse message content with markdown support (same as chat messages)
+    let base_style = Style::default().fg(theme.colors.foreground);
+    for line in record.message.lines() {
+        if line.is_empty() {
+            content.push(Line::from(""));
+        } else {
+            let spans = parse_markdown_line(line, base_style, theme);
+            content.push(Line::from(spans));
+        }
+    }
+
+    content.push(Line::from(""));
+    content.push(Line::from(Span::styled(
+        "Press Esc or Enter to close",
+        Style::default().fg(theme.colors.muted),
+    )));
 
     let paragraph = Paragraph::new(content)
         .block(block)
@@ -637,8 +1014,8 @@ fn render_notification(
     theme: &Theme,
 ) {
     let area = frame.area();
-    let msg_len = u16::try_from(msg.len()).unwrap_or(u16::MAX);
-    let toast_width = msg_len.saturating_add(6).min(area.width.saturating_sub(4));
+    let msg_width = u16::try_from(display_width(msg)).unwrap_or(u16::MAX);
+    let toast_width = msg_width.saturating_add(6).min(area.width.saturating_sub(4));
 
     // Position at top-right
     let toast_area = Rect {

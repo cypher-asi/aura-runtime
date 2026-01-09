@@ -5,7 +5,7 @@
 
 use crate::{
     components::{Message, MessageRole, ToolCard, ToolStatus},
-    events::{RecordSummary, UiCommand, UiEvent},
+    events::{AgentSummary, RecordSummary, UiCommand, UiEvent},
     input::InputHistory,
     terminal::KeyResult,
 };
@@ -23,6 +23,8 @@ const MAX_RECORDS: usize = 100;
 /// Which panel has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PanelFocus {
+    /// Swarm panel (agent list)
+    Swarm,
     /// Chat panel (default)
     #[default]
     Chat,
@@ -88,6 +90,8 @@ pub struct App {
     focus: PanelFocus,
     /// Whether the Record panel is visible
     record_panel_visible: bool,
+    /// Whether the Swarm panel is visible
+    swarm_panel_visible: bool,
     /// Animation frame counter for spinners
     animation_frame: usize,
     /// Kernel records list
@@ -98,6 +102,12 @@ pub struct App {
     records_scroll: usize,
     /// Whether showing record detail view
     showing_record_detail: bool,
+    /// List of agents in the swarm
+    agents: Vec<AgentSummary>,
+    /// Selected agent index in the swarm panel
+    selected_agent: usize,
+    /// Currently active agent ID
+    active_agent_id: String,
 }
 
 /// Type of notification.
@@ -132,11 +142,15 @@ impl App {
             notification: None,
             focus: PanelFocus::default(),
             record_panel_visible: true,
+            swarm_panel_visible: false,
             animation_frame: 0,
             records: VecDeque::new(),
             selected_record: 0,
             records_scroll: 0,
             showing_record_detail: false,
+            agents: Vec::new(),
+            selected_agent: 0,
+            active_agent_id: String::new(),
         }
     }
 
@@ -235,6 +249,30 @@ impl App {
     #[must_use]
     pub const fn record_panel_visible(&self) -> bool {
         self.record_panel_visible
+    }
+
+    /// Check if the Swarm panel is visible.
+    #[must_use]
+    pub const fn swarm_panel_visible(&self) -> bool {
+        self.swarm_panel_visible
+    }
+
+    /// Get the list of agents.
+    #[must_use]
+    pub fn agents(&self) -> &[AgentSummary] {
+        &self.agents
+    }
+
+    /// Get the selected agent index.
+    #[must_use]
+    pub const fn selected_agent(&self) -> usize {
+        self.selected_agent
+    }
+
+    /// Get the active agent ID.
+    #[must_use]
+    pub fn active_agent_id(&self) -> &str {
+        &self.active_agent_id
     }
 
     /// Get the current spinner character for animations.
@@ -346,19 +384,61 @@ impl App {
 
     /// Handle key in normal mode.
     fn handle_normal_key(&mut self, key: KeyEvent) -> KeyResult {
-        // Tab switches focus between panels (only if Record panel is visible)
-        if key.code == KeyCode::Tab && self.record_panel_visible {
-            self.focus = match self.focus {
-                PanelFocus::Chat => PanelFocus::Records,
-                PanelFocus::Records => PanelFocus::Chat,
-            };
+        // Tab switches focus between visible panels (right-to-left, then wrap)
+        // Order: Chat → Record → Swarm → Chat
+        if key.code == KeyCode::Tab {
+            self.focus = self.next_panel_focus();
             return KeyResult::continue_running();
         }
 
-        // Handle keys based on which panel has focus
+        // Text input keys ALWAYS go to chat, regardless of focus
+        // This allows typing messages even when browsing records or agents
+        match key.code {
+            KeyCode::Char(_)
+            | KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Home
+            | KeyCode::End => {
+                return self.handle_chat_key(key);
+            }
+            KeyCode::Enter => {
+                // Enter submits chat if there's input, otherwise panel-specific action
+                if !self.input.is_empty() {
+                    return self.handle_chat_key(key);
+                }
+            }
+            _ => {}
+        }
+
+        // Handle remaining keys based on which panel has focus
         match self.focus {
             PanelFocus::Chat => self.handle_chat_key(key),
             PanelFocus::Records => self.handle_records_key(key),
+            PanelFocus::Swarm => self.handle_swarm_key(key),
+        }
+    }
+
+    /// Get the next panel focus when Tab is pressed.
+    /// Goes right-to-left: Chat → Record → Swarm → Chat
+    fn next_panel_focus(&self) -> PanelFocus {
+        match self.focus {
+            PanelFocus::Chat => {
+                if self.record_panel_visible {
+                    PanelFocus::Records
+                } else if self.swarm_panel_visible {
+                    PanelFocus::Swarm
+                } else {
+                    PanelFocus::Chat
+                }
+            }
+            PanelFocus::Records => {
+                if self.swarm_panel_visible {
+                    PanelFocus::Swarm
+                } else {
+                    PanelFocus::Chat
+                }
+            }
+            PanelFocus::Swarm => PanelFocus::Chat,
         }
     }
 
@@ -366,7 +446,8 @@ impl App {
     fn handle_chat_key(&mut self, key: KeyEvent) -> KeyResult {
         match key.code {
             KeyCode::Enter => {
-                if !self.input.is_empty() {
+                // Don't allow submitting while already processing
+                if !self.input.is_empty() && self.state != AppState::Processing {
                     self.submit_input();
                 }
             }
@@ -478,6 +559,63 @@ impl App {
         KeyResult::continue_running()
     }
 
+    /// Handle key when swarm panel is focused.
+    fn handle_swarm_key(&mut self, key: KeyEvent) -> KeyResult {
+        match key.code {
+            KeyCode::Up => {
+                if self.selected_agent > 0 {
+                    self.selected_agent -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if !self.agents.is_empty() && self.selected_agent < self.agents.len() - 1 {
+                    self.selected_agent += 1;
+                }
+            }
+            KeyCode::Enter => {
+                // Select this agent as active
+                if let Some(agent) = self.agents.get(self.selected_agent) {
+                    let agent_id = agent.id.clone();
+                    if agent_id != self.active_agent_id {
+                        if let Some(tx) = &self.event_tx {
+                            let _ = tx.try_send(UiEvent::SelectAgent(agent_id));
+                        }
+                    }
+                }
+            }
+            KeyCode::PageUp => {
+                self.selected_agent = self.selected_agent.saturating_sub(5);
+            }
+            KeyCode::PageDown => {
+                if !self.agents.is_empty() {
+                    self.selected_agent =
+                        (self.selected_agent + 5).min(self.agents.len().saturating_sub(1));
+                }
+            }
+            KeyCode::Home => {
+                self.selected_agent = 0;
+            }
+            KeyCode::End => {
+                if !self.agents.is_empty() {
+                    self.selected_agent = self.agents.len() - 1;
+                }
+            }
+            // Allow typing in chat even when swarm panel is focused
+            KeyCode::Char(c) => {
+                self.input.insert(self.cursor_pos, c);
+                self.cursor_pos += 1;
+            }
+            KeyCode::Backspace => {
+                if self.cursor_pos > 0 {
+                    self.cursor_pos -= 1;
+                    self.input.remove(self.cursor_pos);
+                }
+            }
+            _ => {}
+        }
+        KeyResult::continue_running()
+    }
+
     /// Submit the current input.
     fn submit_input(&mut self) {
         let text = std::mem::take(&mut self.input);
@@ -537,13 +675,24 @@ impl App {
                     self.focus = PanelFocus::Chat;
                 }
             }
+            "swarm" | "sw" => {
+                self.swarm_panel_visible = !self.swarm_panel_visible;
+                // If closing panel while it has focus, switch to chat
+                if !self.swarm_panel_visible && self.focus == PanelFocus::Swarm {
+                    self.focus = PanelFocus::Chat;
+                }
+                // Request agent list refresh when opening
+                if self.swarm_panel_visible {
+                    if let Some(tx) = &self.event_tx {
+                        let _ = tx.try_send(UiEvent::RefreshAgents);
+                    }
+                }
+            }
             "new" | "n" => {
-                // Clear local UI state
+                // Clear only conversation UI state (not records - they persist per agent)
                 self.messages.clear();
                 self.tools.clear();
-                self.records.clear();
                 self.scroll_offset = 0;
-                self.selected_record = 0;
                 self.streaming_content.clear();
                 // Notify kernel to reset context
                 if let Some(tx) = &self.event_tx {
@@ -585,8 +734,37 @@ impl App {
             UiCommand::SetStatus(status) => {
                 self.status = status;
             }
+            UiCommand::StartStreaming => {
+                // Clear any existing streaming content and start fresh
+                self.streaming_content.clear();
+                // Add a placeholder streaming message that we'll update
+                let mut msg = Message::new(MessageRole::Assistant, "");
+                msg.set_streaming(true);
+                self.add_message(msg);
+            }
             UiCommand::AppendText(text) => {
                 self.streaming_content.push_str(&text);
+                // Update the last message if it's a streaming message
+                if let Some(last_msg) = self.messages.back_mut() {
+                    if last_msg.is_streaming() {
+                        last_msg.set_content(&self.streaming_content);
+                    }
+                }
+            }
+            UiCommand::FinishStreaming => {
+                // Finalize the streaming message
+                if let Some(last_msg) = self.messages.back_mut() {
+                    if last_msg.is_streaming() {
+                        last_msg.set_streaming(false);
+                        if self.streaming_content.is_empty() {
+                            // Remove empty streaming messages
+                            self.messages.pop_back();
+                        } else {
+                            last_msg.set_content(&self.streaming_content);
+                        }
+                    }
+                }
+                self.streaming_content.clear();
             }
             UiCommand::ShowMessage(data) => {
                 let role = match data.role {
@@ -642,11 +820,19 @@ impl App {
                 self.notification = Some((msg, NotificationType::Warning));
             }
             UiCommand::Complete => {
-                // Finalize streaming message
-                if !self.streaming_content.is_empty() {
-                    let content = std::mem::take(&mut self.streaming_content);
-                    self.add_message(Message::new(MessageRole::Assistant, &content));
+                // Finalize any streaming message
+                if let Some(last_msg) = self.messages.back_mut() {
+                    if last_msg.is_streaming() {
+                        last_msg.set_streaming(false);
+                        if !self.streaming_content.is_empty() {
+                            last_msg.set_content(&self.streaming_content);
+                        } else if last_msg.content().is_empty() {
+                            // Remove empty streaming messages
+                            self.messages.pop_back();
+                        }
+                    }
                 }
+                self.streaming_content.clear();
                 self.state = AppState::Idle;
                 self.status = "Ready".to_string();
                 self.tools.clear();
@@ -664,6 +850,32 @@ impl App {
                 if self.selected_record >= self.records.len() && !self.records.is_empty() {
                     self.selected_record = self.records.len() - 1;
                 }
+            }
+            UiCommand::SetAgents(agents) => {
+                self.agents = agents;
+                // Update selected agent index to match active agent
+                if let Some(idx) = self.agents.iter().position(|a| a.id == self.active_agent_id) {
+                    self.selected_agent = idx;
+                }
+                // Keep selection in bounds
+                if self.selected_agent >= self.agents.len() && !self.agents.is_empty() {
+                    self.selected_agent = self.agents.len() - 1;
+                }
+            }
+            UiCommand::SetActiveAgent(agent_id) => {
+                self.active_agent_id = agent_id;
+                // Update is_active flag on agents
+                for agent in &mut self.agents {
+                    agent.is_active = agent.id == self.active_agent_id;
+                }
+                // Move selection to active agent
+                if let Some(idx) = self.agents.iter().position(|a| a.is_active) {
+                    self.selected_agent = idx;
+                }
+            }
+            UiCommand::ClearRecords => {
+                self.records.clear();
+                self.selected_record = 0;
             }
         }
     }

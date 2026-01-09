@@ -29,3 +29,7 @@ aura-gateway-ts/.env
 # Coverage
 lcov.info
 coverage/
+
+# Environment variables
+.env
+.env.local

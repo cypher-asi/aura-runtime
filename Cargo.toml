@@ -26,6 +26,8 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 blake3 = { workspace = true }
 hex = { workspace = true }
+serde_json = { workspace = true }
+dotenvy = "0.15.7"
 
 [workspace]
 resolver = "2"

@@ -42,4 +42,6 @@ mod turn_processor;
 pub use context::{Context, ContextBuilder};
 pub use kernel::{Kernel, KernelConfig, ProcessResult};
 pub use policy::{default_tool_permission, PermissionLevel, Policy, PolicyConfig, PolicyResult};
-pub use turn_processor::{TurnConfig, TurnEntry, TurnProcessor, TurnResult};
+pub use turn_processor::{
+    StreamCallback, StreamCallbackEvent, TurnConfig, TurnEntry, TurnProcessor, TurnResult,
+};

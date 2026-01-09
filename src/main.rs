@@ -5,16 +5,16 @@
 
 use aura_core::{AgentId, Identity, Transaction};
 use aura_executor::ExecutorRouter;
-use aura_kernel::{TurnConfig, TurnProcessor, TurnResult};
+use aura_kernel::{StreamCallback, StreamCallbackEvent, TurnConfig, TurnProcessor, TurnResult};
 use aura_reasoner::{AnthropicProvider, MockProvider, ModelProvider};
 use aura_store::RocksStore;
-use aura_terminal::{App, Terminal, Theme, UiCommand, UiEvent};
+use aura_terminal::{events::AgentSummary, App, Terminal, Theme, UiCommand, UiEvent};
 use aura_tools::{DefaultToolRegistry, ToolExecutor};
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 // ============================================================================
@@ -62,6 +62,9 @@ enum UiMode {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load .env file if present (for development)
+    let _ = dotenvy::dotenv();
+    
     let args = Args::parse();
 
     match args.ui {
@@ -93,8 +96,9 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
     let theme = Theme::by_name(&args.theme);
 
     // Create communication channels
+    // cmd channel needs capacity > MAX_RECORDS (100) to avoid blocking during init
     let (ui_tx, mut ui_rx) = mpsc::channel::<UiEvent>(100);
-    let (cmd_tx, cmd_rx) = mpsc::channel::<UiCommand>(100);
+    let (cmd_tx, cmd_rx) = mpsc::channel::<UiCommand>(200);
 
     // Create terminal app
     let mut app = App::new()
@@ -135,7 +139,10 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
     let store = Arc::new(RocksStore::open(&store_path, false)?);
 
     // Load existing records from the store and send to UI
-    load_existing_records(&store, identity.agent_id, &cmd_tx).await;
+    load_existing_records(&store, identity.agent_id, &cmd_tx);
+
+    // Send initial agent info to UI (there's always at least one agent - the current one)
+    send_initial_agent(&identity, &store, &cmd_tx);
 
     // Create executor with tool support
     let mut executor = ExecutorRouter::new();
@@ -155,10 +162,13 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
     match provider_name {
         "mock" => {
             let provider = Arc::new(MockProvider::simple_response(
-                "I'm a mock assistant. Set ANTHROPIC_API_KEY for real model integration.",
+                "Mock mode: Set ANTHROPIC_API_KEY environment variable to enable real AI responses.",
             ));
             let processor =
                 TurnProcessor::new(provider, store.clone(), executor, tool_registry, turn_config);
+
+            // Set initial status to Mock Mode
+            let _ = cmd_tx.try_send(UiCommand::SetStatus("Mock Mode".to_string()));
 
             // Spawn event processing task
             let cmd_tx_clone = cmd_tx.clone();
@@ -205,7 +215,7 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
                 Err(_e) => {
                     // Fall back to mock provider if Anthropic key not available
                     let provider = Arc::new(MockProvider::simple_response(
-                        "Mock mode: Set ANTHROPIC_API_KEY to use real model.",
+                        "Mock mode: Set ANTHROPIC_API_KEY environment variable to enable real AI responses.",
                     ));
                     let processor = TurnProcessor::new(
                         provider,
@@ -214,6 +224,9 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
                         tool_registry,
                         turn_config,
                     );
+
+                    // Set initial status to Mock Mode
+                    let _ = cmd_tx.try_send(UiCommand::SetStatus("Mock Mode".to_string()));
 
                     // Spawn event processing task
                     let cmd_tx_clone = cmd_tx.clone();
@@ -241,7 +254,7 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
 async fn run_event_loop<P>(
     events: &mut mpsc::Receiver<UiEvent>,
     commands: mpsc::Sender<UiCommand>,
-    processor: TurnProcessor<P, RocksStore, DefaultToolRegistry>,
+    mut processor: TurnProcessor<P, RocksStore, DefaultToolRegistry>,
     store: Arc<RocksStore>,
     agent_id: AgentId,
 ) -> anyhow::Result<()>
@@ -253,18 +266,66 @@ where
     // Get the current head sequence from the store to continue from where we left off
     let mut seq = store.get_head_seq(agent_id).unwrap_or(0) + 1;
 
+    // Create a streaming callback that sends text deltas to the UI
+    let cmd_tx_for_stream = commands.clone();
+    let stream_callback: StreamCallback = Box::new(move |event| {
+        match event {
+            StreamCallbackEvent::TextDelta(text) => {
+                // Send text delta to UI in a fire-and-forget manner
+                let _ = cmd_tx_for_stream.try_send(UiCommand::AppendText(text));
+            }
+            StreamCallbackEvent::ToolStart { name, .. } => {
+                // Update status to show tool execution
+                let _ = cmd_tx_for_stream
+                    .try_send(UiCommand::SetStatus(format!("Running {}...", name)));
+            }
+            StreamCallbackEvent::StepComplete => {
+                // Step complete, status will be updated by the main loop
+            }
+        }
+    });
+    processor.set_stream_callback(Arc::new(stream_callback));
+
     while let Some(event) = events.recv().await {
         match event {
             UiEvent::UserMessage(text) => {
-                debug!(text = %text, "Processing user message");
+                info!(text = %text, seq = seq, "Processing user message");
 
-                // Update status
+                // Update status and start streaming
                 let _ = commands
                     .send(UiCommand::SetStatus("Thinking...".to_string()))
                     .await;
+                let _ = commands.send(UiCommand::StartStreaming).await;
 
-                // Create and enqueue the transaction
-                let tx = Transaction::user_prompt(agent_id, text);
+                // BUG FIX: Drain any stale transactions from the inbox before processing.
+                // Stale transactions can accumulate if previous operations failed mid-way.
+                // We discard them to ensure we process the fresh user message.
+                let mut stale_count = 0;
+                while let Ok(Some((stale_inbox_seq, stale_tx))) = store.dequeue_tx(agent_id) {
+                    warn!(
+                        stale_inbox_seq = stale_inbox_seq,
+                        stale_tx_kind = ?stale_tx.kind,
+                        "Discarding stale inbox transaction"
+                    );
+                    // Create a dummy record entry to clear this from the inbox
+                    // We use the current seq and increment it
+                    let stale_entry = aura_core::RecordEntry::builder(seq, stale_tx.clone())
+                        .context_hash(compute_context_hash(seq, &stale_tx))
+                        .build();
+                    if let Err(e) = store.append_entry_atomic(agent_id, seq, &stale_entry, stale_inbox_seq) {
+                        error!(error = %e, "Failed to clear stale transaction");
+                        break;
+                    }
+                    seq += 1;
+                    stale_count += 1;
+                    if stale_count > 10 {
+                        error!("Too many stale transactions, aborting drain");
+                        break;
+                    }
+                }
+
+                // Create and enqueue the user's transaction
+                let tx = Transaction::user_prompt(agent_id, text.clone());
                 if let Err(e) = store.enqueue_tx(&tx) {
                     error!(error = %e, "Failed to enqueue transaction");
                     let _ = commands
@@ -274,8 +335,8 @@ where
                     continue;
                 }
 
-                // Dequeue the transaction (for the atomic commit protocol)
-                let (inbox_seq, tx) = match store.dequeue_tx(agent_id) {
+                // Dequeue the transaction we just enqueued (inbox should be empty now)
+                let (inbox_seq, dequeued_tx) = match store.dequeue_tx(agent_id) {
                     Ok(Some(item)) => item,
                     Ok(None) => {
                         error!("Transaction was enqueued but not found in inbox");
@@ -286,6 +347,11 @@ where
                         continue;
                     }
                 };
+
+                // Verify we got what we enqueued (sanity check after draining stale entries)
+                if dequeued_tx.tx_id != tx.tx_id {
+                    error!("Transaction mismatch after draining stale entries - this should not happen");
+                }
 
                 // === Transaction 1: User Prompt ===
                 // The prompt transaction is already enqueued and dequeued above.
@@ -360,7 +426,12 @@ where
                         }
 
                         // Show the assistant's response in chat
-                        show_turn_result(&commands, &result).await;
+                        if let Some(msg) = &result.final_message {
+                            let preview: String = msg.text_content().chars().take(100).collect();
+                            info!(response_preview = %preview, "Model response received");
+                        }
+                        // Streaming is always enabled when we have a callback
+                        show_turn_result(&commands, &result, true).await;
                     }
                     Err(e) => {
                         error!(error = %e, "Turn processing failed");
@@ -430,6 +501,14 @@ where
                 let _ = commands
                     .send(UiCommand::SetStatus("Ready".to_string()))
                     .await;
+            }
+            UiEvent::SelectAgent(_agent_id) => {
+                // TODO: Implement agent switching
+                debug!("Agent selection not yet implemented");
+            }
+            UiEvent::RefreshAgents => {
+                // TODO: Implement agent list refresh
+                debug!("Agent refresh not yet implemented");
             }
         }
     }
@@ -504,18 +583,30 @@ async fn send_record_to_ui(
 }
 
 /// Show turn result (chat message and stats) without creating new records.
-async fn show_turn_result(commands: &mpsc::Sender<UiCommand>, result: &TurnResult) {
-    // Show the final message in chat
-    if let Some(message) = &result.final_message {
-        let content = message.text_content();
-        if !content.is_empty() {
-            let _ = commands
-                .send(UiCommand::ShowMessage(aura_terminal::events::MessageData {
-                    role: aura_terminal::events::MessageRole::Assistant,
-                    content,
-                    is_streaming: false,
-                }))
-                .await;
+///
+/// If streaming was used, the message is already displayed and just needs to be finalized.
+/// If no streaming callback was set, we show the full message.
+async fn show_turn_result(
+    commands: &mpsc::Sender<UiCommand>,
+    result: &TurnResult,
+    was_streaming: bool,
+) {
+    if was_streaming {
+        // Finalize the streaming message (it's already been displayed incrementally)
+        let _ = commands.send(UiCommand::FinishStreaming).await;
+    } else {
+        // No streaming - show the full message now
+        if let Some(message) = &result.final_message {
+            let content = message.text_content();
+            if !content.is_empty() {
+                let _ = commands
+                    .send(UiCommand::ShowMessage(aura_terminal::events::MessageData {
+                        role: aura_terminal::events::MessageRole::Assistant,
+                        content,
+                        is_streaming: false,
+                    }))
+                    .await;
+            }
         }
     }
 
@@ -563,7 +654,7 @@ fn create_response_transaction(agent_id: AgentId, response_text: &str) -> Transa
 }
 
 /// Load existing records from the store and send to UI.
-async fn load_existing_records(
+fn load_existing_records(
     store: &Arc<RocksStore>,
     agent_id: AgentId,
     commands: &mpsc::Sender<UiCommand>,
@@ -634,8 +725,41 @@ async fn load_existing_records(
             effect_status,
         };
 
-        let _ = commands.send(UiCommand::NewRecord(record_summary)).await;
+        // Use try_send to avoid blocking - channel may be full during init
+        let _ = commands.try_send(UiCommand::NewRecord(record_summary));
     }
+}
+
+/// Send initial agent info to the UI.
+/// There's always at least one agent - the current terminal agent.
+fn send_initial_agent(
+    identity: &Identity,
+    store: &Arc<RocksStore>,
+    commands: &mpsc::Sender<UiCommand>,
+) {
+    use aura_store::Store;
+
+    // Get record count for this agent
+    let record_count = store.get_head_seq(identity.agent_id).unwrap_or(0);
+
+    // Get last activity timestamp
+    let last_active = chrono::Local::now().format("%H:%M:%S").to_string();
+
+    // Create agent summary
+    let agent = AgentSummary {
+        id: hex::encode(identity.agent_id.as_bytes()),
+        name: identity.name.clone(),
+        zns_id: identity.zns_id.clone(),
+        is_active: true,
+        record_count,
+        last_active,
+    };
+
+    // Send to UI - use try_send to avoid blocking during init (channel may be full)
+    let _ = commands.try_send(UiCommand::SetAgents(vec![agent]));
+    let _ = commands.try_send(UiCommand::SetActiveAgent(hex::encode(
+        identity.agent_id.as_bytes(),
+    )));
 }
 
 // ============================================================================
