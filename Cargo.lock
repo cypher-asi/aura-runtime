@@ -257,6 +257,7 @@ name = "aura-swarm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "aura-core",
  "aura-executor",
  "aura-kernel",

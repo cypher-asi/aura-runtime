@@ -5,7 +5,10 @@ use crate::router::{create_router, RouterState};
 use crate::scheduler::Scheduler;
 use aura_executor::ExecutorRouter;
 use aura_kernel::{Kernel, KernelConfig, PolicyConfig};
-use aura_reasoner::{HttpReasoner, MockReasoner, Reasoner, ReasonerConfig};
+use aura_reasoner::{
+    AnthropicConfig, AnthropicProvider, HttpReasoner, MockProvider, MockReasoner, ModelProvider,
+    Reasoner, ReasonerConfig,
+};
 use aura_store::RocksStore;
 use aura_tools::{ToolConfig, ToolExecutor};
 use std::net::SocketAddr;
@@ -94,6 +97,28 @@ impl Swarm {
             .await
     }
 
+    /// Create a `ModelProvider` for WebSocket sessions.
+    ///
+    /// Tries `AnthropicProvider` from environment, falls back to `MockProvider`.
+    fn create_model_provider() -> Arc<dyn ModelProvider + Send + Sync> {
+        match AnthropicConfig::from_env() {
+            Ok(config) => match AnthropicProvider::new(config) {
+                Ok(provider) => {
+                    info!("Anthropic model provider ready for WebSocket sessions");
+                    Arc::new(provider)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to create Anthropic provider, using mock");
+                    Arc::new(MockProvider::simple_response("(mock provider)"))
+                }
+            },
+            Err(_) => {
+                warn!("No Anthropic API key configured, WebSocket sessions will use mock provider");
+                Arc::new(MockProvider::simple_response("(mock provider)"))
+            }
+        }
+    }
+
     async fn run_with_mock_reasoner(
         self,
         store: Arc<RocksStore>,
@@ -112,11 +137,15 @@ impl Swarm {
         let scheduler = Arc::new(Scheduler::new(store.clone(), kernel));
         info!("Scheduler ready");
 
+        // Create model provider for WebSocket sessions
+        let provider = Self::create_model_provider();
+
         // Create router
         let state = RouterState {
             store,
             scheduler,
             config: self.config.clone(),
+            provider,
         };
         let app = create_router(state);
 

@@ -1,10 +1,12 @@
 //! HTTP and WebSocket router for the swarm API.
 
+//! HTTP and WebSocket router for the swarm API.
+
 use crate::config::SwarmConfig;
 use crate::scheduler::Scheduler;
 use crate::session::{handle_ws_connection, WsContext};
 use aura_core::{AgentId, Transaction, TransactionType};
-use aura_reasoner::Reasoner;
+use aura_reasoner::{ModelProvider, Reasoner};
 use aura_store::Store;
 use axum::{
     extract::{
@@ -31,6 +33,8 @@ where
     pub store: Arc<S>,
     pub scheduler: Arc<Scheduler<S, R>>,
     pub config: SwarmConfig,
+    /// Model provider for WebSocket sessions (type-erased).
+    pub provider: Arc<dyn ModelProvider + Send + Sync>,
 }
 
 impl<S, R> Clone for RouterState<S, R>
@@ -43,6 +47,7 @@ where
             store: self.store.clone(),
             scheduler: self.scheduler.clone(),
             config: self.config.clone(),
+            provider: self.provider.clone(),
         }
     }
 }
@@ -247,6 +252,13 @@ where
 {
     let ctx = WsContext {
         workspace_base: state.config.workspaces_path(),
+        provider: state.provider.clone(),
+        tool_config: aura_tools::ToolConfig {
+            enable_fs: state.config.enable_fs_tools,
+            enable_commands: state.config.enable_cmd_tools,
+            command_allowlist: state.config.allowed_commands.clone(),
+            ..Default::default()
+        },
     };
     ws.on_upgrade(move |socket| handle_ws_connection(socket, ctx))
 }
