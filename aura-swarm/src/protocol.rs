@@ -157,6 +157,7 @@ pub struct AssistantMessageEnd {
     pub message_id: String,
     pub stop_reason: String,
     pub usage: SessionUsage,
+    pub files_changed: FilesChanged,
 }
 
 /// Token usage information for a session.
@@ -172,6 +173,29 @@ pub struct SessionUsage {
     pub model: String,
     /// Provider name (e.g., "anthropic").
     pub provider: String,
+}
+
+/// A single file mutation observed during a turn.
+#[derive(Debug, Clone, Serialize)]
+pub struct FileOp {
+    /// Relative path within the workspace.
+    pub path: String,
+    /// Type of operation: "created", "modified", or "deleted".
+    pub operation: String,
+}
+
+/// Summary of file mutations during a turn.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FilesChanged {
+    pub created: Vec<String>,
+    pub modified: Vec<String>,
+    pub deleted: Vec<String>,
+}
+
+impl FilesChanged {
+    pub fn is_empty(&self) -> bool {
+        self.created.is_empty() && self.modified.is_empty() && self.deleted.is_empty()
+    }
 }
 
 /// Payload for `error`.

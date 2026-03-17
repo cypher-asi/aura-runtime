@@ -6,7 +6,7 @@
 use crate::protocol::*;
 use aura_core::{AgentId, ExternalToolDefinition};
 use aura_executor::ExecutorRouter;
-use aura_kernel::{StreamCallback, StreamCallbackEvent, TurnConfig, TurnProcessor};
+use aura_kernel::{StreamCallback, StreamCallbackEvent, TurnConfig, TurnProcessor, TurnResult};
 use aura_reasoner::{
     Message, ModelProvider, ModelRequest, ModelResponse, StreamEventStream, ToolDefinition,
 };
@@ -529,6 +529,8 @@ async fn handle_user_message(
                 0.0
             };
 
+            let files_changed = extract_files_changed(&turn_result);
+
             let _ = outbound_tx.send(OutboundMessage::AssistantMessageEnd(
                 AssistantMessageEnd {
                     message_id,
@@ -542,6 +544,7 @@ async fn handle_user_message(
                         model: turn_result.model.clone(),
                         provider: turn_result.provider.clone(),
                     },
+                    files_changed,
                 },
             ));
 
@@ -561,5 +564,49 @@ async fn handle_user_message(
                 recoverable: true,
             }));
         }
+    }
+}
+
+/// Extract file mutation information from a turn result by inspecting
+/// tool names and their arguments.
+fn extract_files_changed(turn_result: &TurnResult) -> FilesChanged {
+    let mut created = Vec::new();
+    let mut modified = Vec::new();
+    let mut deleted = Vec::new();
+
+    for entry in &turn_result.entries {
+        for tool in &entry.executed_tools {
+            if tool.is_error {
+                continue;
+            }
+            let path = tool
+                .tool_args
+                .get("path")
+                .or_else(|| tool.tool_args.get("file_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if path.is_empty() {
+                continue;
+            }
+
+            match tool.tool_name.as_str() {
+                "fs_write" => created.push(path),
+                "fs_edit" => modified.push(path),
+                "fs_delete" => deleted.push(path),
+                _ => {}
+            }
+        }
+    }
+
+    // Deduplicate: if a file was created and then modified, keep only "created"
+    modified.retain(|p| !created.contains(p));
+    deleted.retain(|p| !created.contains(p));
+
+    FilesChanged {
+        created,
+        modified,
+        deleted,
     }
 }
