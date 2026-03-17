@@ -19,6 +19,7 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 async-trait = "0.1"
 regex = "1.11"
+reqwest = { workspace = true }
 walkdir = "2.5"
 
 [dev-dependencies]

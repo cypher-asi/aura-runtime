@@ -813,6 +813,22 @@ impl Identity {
 // Tool Types
 // ============================================================================
 
+/// Definition for an external tool registered at runtime via `session_init`.
+///
+/// External tools are dispatched via HTTP POST to a callback URL.
+/// This type is shared between the session protocol and the tool executor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalToolDefinition {
+    /// Tool name (must be unique across all tools).
+    pub name: String,
+    /// Human-readable description for the model.
+    pub description: String,
+    /// JSON Schema for input parameters.
+    pub input_schema: serde_json::Value,
+    /// HTTP endpoint that handles tool execution.
+    pub callback_url: String,
+}
+
 /// A tool call request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {

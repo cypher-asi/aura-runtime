@@ -1,6 +1,7 @@
 //! Tool executor implementation.
 
 use crate::error::ToolError;
+use crate::external::{ExternalTool, ExternalToolDefinition};
 use crate::sandbox::Sandbox;
 use crate::tool::{builtin_tools, Tool, ToolContext};
 use crate::ToolConfig;
@@ -40,6 +41,12 @@ impl ToolExecutor {
     /// Register an additional tool at runtime.
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
+    }
+
+    /// Register an external tool that dispatches via HTTP POST.
+    pub fn register_external(&mut self, def: ExternalToolDefinition) {
+        let tool = ExternalTool::new(def);
+        self.tools.insert(tool.name().to_string(), Box::new(tool));
     }
 
     /// Execute a tool call.

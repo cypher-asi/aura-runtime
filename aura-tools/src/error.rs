@@ -37,6 +37,9 @@ pub enum ToolError {
 
     #[error("serialization error: {0}")]
     Serialization(String),
+
+    #[error("external tool error: {0}")]
+    ExternalToolError(String),
 }
 
 #[cfg(test)]

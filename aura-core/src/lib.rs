@@ -20,9 +20,10 @@ pub mod types;
 pub use error::{AuraError, Result};
 pub use ids::{ActionId, AgentId, Hash, ProcessId, TxId};
 pub use types::{
-    Action, ActionKind, ActionResultPayload, Decision, Effect, EffectKind, EffectStatus, Identity,
-    ProcessPending, Proposal, ProposalSet, RecordEntry, RejectedProposal, ToolCall, ToolDecision,
-    ToolExecution, ToolProposal, ToolResult, Trace, Transaction, TransactionType,
+    Action, ActionKind, ActionResultPayload, Decision, Effect, EffectKind, EffectStatus,
+    ExternalToolDefinition, Identity, ProcessPending, Proposal, ProposalSet, RecordEntry,
+    RejectedProposal, ToolCall, ToolDecision, ToolExecution, ToolProposal, ToolResult, Trace,
+    Transaction, TransactionType,
 };
 
 // Legacy alias for backwards compatibility

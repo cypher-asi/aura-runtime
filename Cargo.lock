@@ -308,6 +308,7 @@ dependencies = [
  "aura-reasoner",
  "bytes",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
