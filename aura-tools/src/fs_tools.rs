@@ -630,6 +630,16 @@ fn wait_with_hard_timeout(
 // Tool Trait Implementations
 // ============================================================================
 
+/// Run a blocking tool closure on the tokio blocking threadpool.
+async fn spawn_blocking_tool<F>(f: F) -> Result<ToolResult, ToolError>
+where
+    F: FnOnce() -> Result<ToolResult, ToolError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| ToolError::CommandFailed(format!("blocking task panicked: {e}")))?
+}
+
 /// `fs_ls` tool: list directory contents.
 pub struct FsLsTool;
 
@@ -665,8 +675,10 @@ impl Tool for FsLsTool {
     ) -> Result<ToolResult, ToolError> {
         let path = args["path"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
-        fs_ls(&ctx.sandbox, path)
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?
+            .to_string();
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || fs_ls(&sandbox, &path)).await
     }
 }
 
@@ -707,14 +719,16 @@ impl Tool for FsReadTool {
     ) -> Result<ToolResult, ToolError> {
         let path = args["path"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?
+            .to_string();
         let max_bytes = args["max_bytes"]
             .as_u64()
             .map_or(ctx.config.max_read_bytes, |n| {
                 usize::try_from(n).unwrap_or(usize::MAX)
             });
         let max_bytes = max_bytes.min(ctx.config.max_read_bytes);
-        fs_read(&ctx.sandbox, path, max_bytes)
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || fs_read(&sandbox, &path, max_bytes)).await
     }
 }
 
@@ -752,8 +766,10 @@ impl Tool for FsStatTool {
     ) -> Result<ToolResult, ToolError> {
         let path = args["path"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
-        fs_stat(&ctx.sandbox, path)
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?
+            .to_string();
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || fs_stat(&sandbox, &path)).await
     }
 }
 
@@ -800,12 +816,15 @@ impl Tool for FsWriteTool {
     ) -> Result<ToolResult, ToolError> {
         let path = args["path"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?
+            .to_string();
         let content = args["content"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'content' argument".into()))?;
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'content' argument".into()))?
+            .to_string();
         let create_dirs = args["create_dirs"].as_bool().unwrap_or(false);
-        fs_write(&ctx.sandbox, path, content, create_dirs)
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || fs_write(&sandbox, &path, &content, create_dirs)).await
     }
 }
 
@@ -854,15 +873,20 @@ impl Tool for FsEditTool {
     ) -> Result<ToolResult, ToolError> {
         let path = args["path"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?
+            .to_string();
         let old_text = args["old_text"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'old_text' argument".into()))?;
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'old_text' argument".into()))?
+            .to_string();
         let new_text = args["new_text"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'new_text' argument".into()))?;
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'new_text' argument".into()))?
+            .to_string();
         let replace_all = args["replace_all"].as_bool().unwrap_or(false);
-        fs_edit(&ctx.sandbox, path, old_text, new_text, replace_all)
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || fs_edit(&sandbox, &path, &old_text, &new_text, replace_all))
+            .await
     }
 }
 
@@ -915,15 +939,27 @@ impl Tool for SearchCodeTool {
     ) -> Result<ToolResult, ToolError> {
         let pattern = args["pattern"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'pattern' argument".into()))?;
-        let path = args["path"].as_str();
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'pattern' argument".into()))?
+            .to_string();
+        let path = args["path"].as_str().map(String::from);
         let file_pattern = args["include"]
             .as_str()
-            .or_else(|| args["file_pattern"].as_str());
+            .or_else(|| args["file_pattern"].as_str())
+            .map(String::from);
         let max_results = args["max_results"]
             .as_u64()
             .map_or(100, |n| usize::try_from(n).unwrap_or(100));
-        search_code(&ctx.sandbox, pattern, path, file_pattern, max_results)
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || {
+            search_code(
+                &sandbox,
+                &pattern,
+                path.as_deref(),
+                file_pattern.as_deref(),
+                max_results,
+            )
+        })
+        .await
     }
 }
 
@@ -960,8 +996,10 @@ impl Tool for FsDeleteTool {
     ) -> Result<ToolResult, ToolError> {
         let path = args["path"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
-        fs_delete(&ctx.sandbox, path)
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?
+            .to_string();
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || fs_delete(&sandbox, &path)).await
     }
 }
 
@@ -1002,9 +1040,11 @@ impl Tool for FsFindTool {
     ) -> Result<ToolResult, ToolError> {
         let pattern = args["pattern"]
             .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'pattern' argument".into()))?;
-        let path = args["path"].as_str();
-        fs_find(&ctx.sandbox, pattern, path, 200)
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'pattern' argument".into()))?
+            .to_string();
+        let path = args["path"].as_str().map(String::from);
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || fs_find(&sandbox, &pattern, path.as_deref(), 200)).await
     }
 }
 
@@ -1087,7 +1127,8 @@ impl Tool for CmdRunTool {
     ) -> Result<ToolResult, ToolError> {
         let cwd = args["cwd"]
             .as_str()
-            .or_else(|| args["working_dir"].as_str());
+            .or_else(|| args["working_dir"].as_str())
+            .map(String::from);
 
         let timeout_ms = if let Some(secs) = args["timeout_secs"].as_u64() {
             secs * 1000
@@ -1100,17 +1141,23 @@ impl Tool for CmdRunTool {
         // "command" mode: single shell string, shell-wrapped directly
         if let Some(command) = args["command"].as_str() {
             check_command_allowlist(command, &ctx.config.command_allowlist)?;
-            return cmd_run(&ctx.sandbox, command, &[], cwd, timeout_ms);
+            let command = command.to_string();
+            let sandbox = ctx.sandbox.clone();
+            return spawn_blocking_tool(move || {
+                cmd_run(&sandbox, &command, &[], cwd.as_deref(), timeout_ms)
+            })
+            .await;
         }
 
         // "program" + "args" mode (legacy)
-        let program = args["program"].as_str().ok_or_else(|| {
-            ToolError::InvalidArguments(
-                "missing 'command' or 'program' argument".into(),
-            )
-        })?;
+        let program = args["program"]
+            .as_str()
+            .ok_or_else(|| {
+                ToolError::InvalidArguments("missing 'command' or 'program' argument".into())
+            })?
+            .to_string();
 
-        check_command_allowlist(program, &ctx.config.command_allowlist)?;
+        check_command_allowlist(&program, &ctx.config.command_allowlist)?;
 
         let cmd_args: Vec<String> = args["args"]
             .as_array()
@@ -1121,7 +1168,11 @@ impl Tool for CmdRunTool {
             })
             .unwrap_or_default();
 
-        cmd_run(&ctx.sandbox, program, &cmd_args, cwd, timeout_ms)
+        let sandbox = ctx.sandbox.clone();
+        spawn_blocking_tool(move || {
+            cmd_run(&sandbox, &program, &cmd_args, cwd.as_deref(), timeout_ms)
+        })
+        .await
     }
 }
 
