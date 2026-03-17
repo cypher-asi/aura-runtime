@@ -78,11 +78,21 @@ impl ToolError {
     #[must_use]
     pub const fn is_recoverable(&self) -> bool {
         match self {
-            Self::CommandTimeout { .. }
+            Self::UnknownTool(_)
+            | Self::ToolDisabled(_)
+            | Self::SandboxViolation { .. }
+            | Self::CommandNotAllowed(_) => false,
+
+            Self::PathNotFound(_)
+            | Self::Io(_)
+            | Self::InvalidArguments(_)
+            | Self::CommandTimeout { .. }
+            | Self::CommandFailed(_)
+            | Self::SizeLimitExceeded { .. }
+            | Self::Serialization(_)
+            | Self::ExternalToolError(_)
             | Self::ExternalToolCallbackFailed { .. }
-            | Self::ExternalToolCallbackUnreachable { .. }
-            | Self::ExternalToolError(_) => true,
-            _ => true,
+            | Self::ExternalToolCallbackUnreachable { .. } => true,
         }
     }
 }
