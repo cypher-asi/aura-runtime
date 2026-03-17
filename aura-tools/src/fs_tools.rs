@@ -1007,6 +1007,21 @@ impl Tool for FsFindTool {
     }
 }
 
+/// Validate a command string against the allowlist.
+///
+/// When the allowlist is non-empty, the first whitespace-delimited token
+/// of the command string must appear in the list.
+fn check_command_allowlist(command: &str, allowlist: &[String]) -> Result<(), ToolError> {
+    if allowlist.is_empty() {
+        return Ok(());
+    }
+    let program = command.split_whitespace().next().unwrap_or(command);
+    if !allowlist.iter().any(|a| a == program) {
+        return Err(ToolError::CommandNotAllowed(program.into()));
+    }
+    Ok(())
+}
+
 /// `cmd_run` tool: run a shell command.
 ///
 /// Accepts two invocation styles:
@@ -1083,6 +1098,7 @@ impl Tool for CmdRunTool {
 
         // "command" mode: single shell string, shell-wrapped directly
         if let Some(command) = args["command"].as_str() {
+            check_command_allowlist(command, &ctx.config.command_allowlist)?;
             return cmd_run(&ctx.sandbox, command, &[], cwd, timeout_ms);
         }
 
@@ -1093,11 +1109,7 @@ impl Tool for CmdRunTool {
             )
         })?;
 
-        if !ctx.config.command_allowlist.is_empty()
-            && !ctx.config.command_allowlist.contains(&program.to_string())
-        {
-            return Err(ToolError::CommandNotAllowed(program.into()));
-        }
+        check_command_allowlist(program, &ctx.config.command_allowlist)?;
 
         let cmd_args: Vec<String> = args["args"]
             .as_array()
