@@ -42,14 +42,17 @@ pub struct ExternalTool {
     client: reqwest::Client,
 }
 
+const DEFAULT_CALLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl ExternalTool {
     /// Create a new external tool from a definition.
     #[must_use]
     pub fn new(def: ExternalToolDefinition) -> Self {
-        Self {
-            def,
-            client: reqwest::Client::new(),
-        }
+        let client = reqwest::Client::builder()
+            .timeout(DEFAULT_CALLBACK_TIMEOUT)
+            .build()
+            .unwrap_or_default();
+        Self { def, client }
     }
 
     /// Create a new external tool with a custom HTTP client.
