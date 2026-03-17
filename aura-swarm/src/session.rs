@@ -638,8 +638,8 @@ fn finalize_turn(
 
             let context_utilization = if session.context_window_tokens > 0 {
                 #[allow(clippy::cast_precision_loss)]
-                let ratio = session.cumulative_input_tokens as f32
-                    / session.context_window_tokens as f32;
+                let ratio =
+                    input_tokens as f32 / session.context_window_tokens as f32;
                 ratio.min(1.0)
             } else {
                 0.0
