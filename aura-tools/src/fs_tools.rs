@@ -271,6 +271,101 @@ pub fn search_code(
         .with_metadata("match_count", results.len().to_string()))
 }
 
+/// Delete a file within the sandbox.
+#[instrument(skip(sandbox), fields(path = %path))]
+pub fn fs_delete(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError> {
+    let resolved = sandbox.resolve_existing(path)?;
+    debug!(?resolved, "Deleting file");
+
+    if !resolved.is_file() {
+        return Err(ToolError::InvalidArguments(format!(
+            "{path} is not a file"
+        )));
+    }
+
+    fs::remove_file(&resolved)?;
+    Ok(ToolResult::success("fs_delete", format!("Deleted {path}")))
+}
+
+/// Skip directories that shouldn't be included in find results.
+fn should_skip_dir(name: &str) -> bool {
+    matches!(
+        name,
+        "node_modules" | "target" | ".git" | "__pycache__" | ".venv"
+    ) || name.starts_with('.')
+}
+
+/// Find files matching a glob pattern within the sandbox.
+#[instrument(skip(sandbox), fields(pattern = %pattern))]
+pub fn fs_find(
+    sandbox: &Sandbox,
+    pattern: &str,
+    path: Option<&str>,
+    max_results: usize,
+) -> Result<ToolResult, ToolError> {
+    use glob::Pattern;
+
+    let search_root = match path {
+        Some(p) => sandbox.resolve_existing(p)?,
+        None => sandbox.root().to_path_buf(),
+    };
+
+    debug!(?search_root, "Finding files");
+
+    let glob_pattern = Pattern::new(pattern).map_err(|e| {
+        ToolError::InvalidArguments(format!("Invalid glob pattern: {e}"))
+    })?;
+
+    let max_results = max_results.min(200);
+    let mut results = Vec::new();
+
+    fn walk(
+        dir: &std::path::Path,
+        root: &std::path::Path,
+        pattern: &Pattern,
+        results: &mut Vec<String>,
+        max: usize,
+    ) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if results.len() >= max {
+                return;
+            }
+            let path = entry.path();
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+
+            if path.is_dir() {
+                if should_skip_dir(&name) {
+                    continue;
+                }
+                walk(&path, root, pattern, results, max);
+            } else {
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy();
+                if pattern.matches(&relative) || pattern.matches(&*name) {
+                    results.push(relative.to_string());
+                }
+            }
+        }
+    }
+
+    walk(&search_root, &search_root, &glob_pattern, &mut results, max_results);
+
+    let output = if results.is_empty() {
+        "No files found".to_string()
+    } else {
+        results.join("\n")
+    };
+
+    Ok(ToolResult::success("fs_find", output)
+        .with_metadata("match_count", results.len().to_string()))
+}
+
 // ============================================================================
 // Command Execution
 // ============================================================================
@@ -813,6 +908,87 @@ impl Tool for SearchCodeTool {
     }
 }
 
+/// `fs_delete` tool: delete a file.
+pub struct FsDeleteTool;
+
+#[async_trait]
+impl Tool for FsDeleteTool {
+    fn name(&self) -> &str {
+        "fs_delete"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "fs_delete".into(),
+            description: "Delete a file within the workspace. Only files can be deleted, not directories.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to delete (relative to workspace root)"
+                    }
+                },
+                "required": ["path"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let path = args["path"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+        fs_delete(&ctx.sandbox, path)
+    }
+}
+
+/// `fs_find` tool: find files by glob pattern.
+pub struct FsFindTool;
+
+#[async_trait]
+impl Tool for FsFindTool {
+    fn name(&self) -> &str {
+        "fs_find"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "fs_find".into(),
+            description: "Find files matching a glob pattern. Skips node_modules, target, .git, __pycache__, and dot-prefixed directories. Results capped at 200.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern to match (e.g., '*.rs', '**/*.ts', 'src/*.json')"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search in (default: workspace root)"
+                    }
+                },
+                "required": ["pattern"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let pattern = args["pattern"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'pattern' argument".into()))?;
+        let path = args["path"].as_str();
+        fs_find(&ctx.sandbox, pattern, path, 200)
+    }
+}
+
 /// `cmd_run` tool: run a shell command.
 pub struct CmdRunTool;
 
@@ -1184,6 +1360,94 @@ mod tests {
 
         let updated = fs::read_to_string(dir.path().join("multi.txt")).unwrap();
         assert_eq!(updated, "line1\nnew_content\nline3");
+    }
+
+    // ========================================================================
+    // fs_delete Tests
+    // ========================================================================
+
+    #[test]
+    fn test_fs_delete_file() {
+        let (sandbox, dir) = create_test_sandbox();
+        fs::write(dir.path().join("doomed.txt"), "bye").unwrap();
+
+        let result = fs_delete(&sandbox, "doomed.txt").unwrap();
+        assert!(result.ok);
+        assert!(!dir.path().join("doomed.txt").exists());
+    }
+
+    #[test]
+    fn test_fs_delete_nonexistent() {
+        let (sandbox, _dir) = create_test_sandbox();
+        let result = fs_delete(&sandbox, "ghost.txt");
+        assert!(matches!(result, Err(ToolError::PathNotFound(_))));
+    }
+
+    #[test]
+    fn test_fs_delete_directory_rejected() {
+        let (sandbox, dir) = create_test_sandbox();
+        fs::create_dir(dir.path().join("subdir")).unwrap();
+
+        let result = fs_delete(&sandbox, "subdir");
+        assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+    }
+
+    // ========================================================================
+    // fs_find Tests
+    // ========================================================================
+
+    #[test]
+    fn test_fs_find_simple() {
+        let (sandbox, dir) = create_test_sandbox();
+        fs::write(dir.path().join("hello.rs"), "fn main() {}").unwrap();
+        fs::write(dir.path().join("hello.txt"), "hello").unwrap();
+
+        let result = fs_find(&sandbox, "*.rs", None, 200).unwrap();
+        assert!(result.ok);
+        let output = String::from_utf8_lossy(&result.stdout);
+        assert!(output.contains("hello.rs"));
+        assert!(!output.contains("hello.txt"));
+    }
+
+    #[test]
+    fn test_fs_find_no_matches() {
+        let (sandbox, _dir) = create_test_sandbox();
+        let result = fs_find(&sandbox, "*.xyz", None, 200).unwrap();
+        assert!(result.ok);
+        let output = String::from_utf8_lossy(&result.stdout);
+        assert!(output.contains("No files found"));
+    }
+
+    #[test]
+    fn test_fs_find_nested() {
+        let (sandbox, dir) = create_test_sandbox();
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        fs::write(dir.path().join("src/nested/deep.rs"), "").unwrap();
+
+        let result = fs_find(&sandbox, "*.rs", Some("src"), 200).unwrap();
+        assert!(result.ok);
+        let output = String::from_utf8_lossy(&result.stdout);
+        assert!(output.contains("deep.rs"));
+    }
+
+    #[test]
+    fn test_fs_find_skips_hidden_dirs() {
+        let (sandbox, dir) = create_test_sandbox();
+        fs::create_dir_all(dir.path().join(".hidden")).unwrap();
+        fs::write(dir.path().join(".hidden/secret.rs"), "").unwrap();
+        fs::write(dir.path().join("visible.rs"), "").unwrap();
+
+        let result = fs_find(&sandbox, "*.rs", None, 200).unwrap();
+        let output = String::from_utf8_lossy(&result.stdout);
+        assert!(output.contains("visible.rs"));
+        assert!(!output.contains("secret.rs"));
+    }
+
+    #[test]
+    fn test_fs_find_invalid_pattern() {
+        let (sandbox, _dir) = create_test_sandbox();
+        let result = fs_find(&sandbox, "[invalid", None, 200);
+        assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
     }
 
     // ========================================================================

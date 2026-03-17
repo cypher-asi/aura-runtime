@@ -43,7 +43,8 @@ pub trait Tool: Send + Sync {
 /// Returns all built-in tool instances.
 pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
     use crate::fs_tools::{
-        CmdRunTool, FsEditTool, FsLsTool, FsReadTool, FsStatTool, FsWriteTool, SearchCodeTool,
+        CmdRunTool, FsDeleteTool, FsEditTool, FsFindTool, FsLsTool, FsReadTool, FsStatTool,
+        FsWriteTool, SearchCodeTool,
     };
 
     vec![
@@ -52,6 +53,8 @@ pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
         Box::new(FsStatTool),
         Box::new(FsWriteTool),
         Box::new(FsEditTool),
+        Box::new(FsDeleteTool),
+        Box::new(FsFindTool),
         Box::new(SearchCodeTool),
         Box::new(CmdRunTool),
     ]
