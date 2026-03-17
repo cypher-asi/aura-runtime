@@ -117,6 +117,8 @@ pub fn fs_write(
     let resolved = sandbox.resolve_new(path)?;
     debug!(?resolved, "Writing file");
 
+    let file_existed = resolved.exists();
+
     // Create parent directories if requested
     if create_dirs {
         if let Some(parent) = resolved.parent() {
@@ -137,7 +139,8 @@ pub fn fs_write(
         "fs_write",
         format!("Wrote {bytes_written} bytes to {path}"),
     )
-    .with_metadata("bytes_written", bytes_written.to_string()))
+    .with_metadata("bytes_written", bytes_written.to_string())
+    .with_metadata("file_existed", file_existed.to_string()))
 }
 
 /// Edit a file by replacing text.

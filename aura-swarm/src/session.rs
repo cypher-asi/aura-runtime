@@ -704,7 +704,17 @@ fn extract_files_changed(turn_result: &TurnResult) -> FilesChanged {
             }
 
             match tool.tool_name.as_str() {
-                "fs_write" => created.push(path),
+                "fs_write" => {
+                    let existed = tool
+                        .metadata
+                        .get("file_existed")
+                        .map_or(false, |v| v == "true");
+                    if existed {
+                        modified.push(path);
+                    } else {
+                        created.push(path);
+                    }
+                }
                 "fs_edit" => modified.push(path),
                 "fs_delete" => deleted.push(path),
                 _ => {}

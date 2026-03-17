@@ -220,6 +220,8 @@ pub struct ExecutedToolCall {
     pub result: ToolResultContent,
     /// Whether the tool failed
     pub is_error: bool,
+    /// Metadata from the tool result (e.g. `file_existed`, `bytes_written`).
+    pub metadata: std::collections::HashMap<String, String>,
 }
 
 /// A single step entry in a turn.
@@ -799,6 +801,7 @@ where
                             tool_args: input.clone(),
                             result: ToolResultContent::text(format!("Tool '{name}' is not allowed")),
                             is_error: true,
+                            metadata: Default::default(),
                         });
                         continue;
                     }
@@ -840,6 +843,7 @@ where
                                 tool_args: input.clone(),
                                 result: content,
                                 is_error: !tool_result.ok,
+                                metadata: tool_result.metadata,
                             });
                         } else {
                             results.push(ExecutedToolCall {
@@ -848,6 +852,7 @@ where
                                 tool_args: input.clone(),
                                 result: ToolResultContent::text("Tool executed successfully"),
                                 is_error: false,
+                                metadata: Default::default(),
                             });
                         }
                     }
@@ -866,6 +871,7 @@ where
                             tool_args: input.clone(),
                             result: ToolResultContent::text(error_msg),
                             is_error: true,
+                            metadata: Default::default(),
                         });
                     }
                 }
