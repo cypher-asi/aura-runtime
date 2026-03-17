@@ -154,6 +154,8 @@ pub struct Session {
     pub initialized: bool,
     /// Available tool definitions (builtin + external).
     pub tool_definitions: Vec<ToolDefinition>,
+    /// Context window size in tokens (for utilization calculation).
+    pub context_window_tokens: u64,
 }
 
 impl Session {
@@ -174,6 +176,7 @@ impl Session {
             workspace: default_workspace,
             initialized: false,
             tool_definitions: Vec::new(),
+            context_window_tokens: 200_000,
         }
     }
 
@@ -517,6 +520,15 @@ async fn handle_user_message(
                 "end_turn"
             };
 
+            let context_utilization = if session.context_window_tokens > 0 {
+                #[allow(clippy::cast_precision_loss)]
+                let ratio = session.cumulative_input_tokens as f32
+                    / session.context_window_tokens as f32;
+                ratio.min(1.0)
+            } else {
+                0.0
+            };
+
             let _ = outbound_tx.send(OutboundMessage::AssistantMessageEnd(
                 AssistantMessageEnd {
                     message_id,
@@ -526,6 +538,9 @@ async fn handle_user_message(
                         output_tokens,
                         cumulative_input_tokens: session.cumulative_input_tokens,
                         cumulative_output_tokens: session.cumulative_output_tokens,
+                        context_utilization,
+                        model: turn_result.model.clone(),
+                        provider: turn_result.provider.clone(),
                     },
                 },
             ));

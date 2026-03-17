@@ -152,6 +152,10 @@ pub struct TurnResult {
     pub steps: u32,
     /// Whether any tools failed
     pub had_failures: bool,
+    /// Model identifier used for this turn.
+    pub model: String,
+    /// Provider name (e.g., "anthropic").
+    pub provider: String,
 }
 
 /// Callback type for streaming text events.
@@ -468,6 +472,8 @@ where
         let mut total_output_tokens = 0u32;
         let mut had_failures = false;
         let mut final_message = None;
+        let provider_name = self.provider.name().to_string();
+        let model_name = self.config.model.clone();
 
         for step in 0..self.config.max_steps {
             debug!(step = step, messages = messages.len(), "Processing step");
@@ -602,6 +608,8 @@ where
             total_output_tokens,
             steps,
             had_failures,
+            model: model_name,
+            provider: provider_name,
         })
     }
 

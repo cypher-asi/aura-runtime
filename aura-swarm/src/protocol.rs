@@ -166,6 +166,12 @@ pub struct SessionUsage {
     pub output_tokens: u64,
     pub cumulative_input_tokens: u64,
     pub cumulative_output_tokens: u64,
+    /// Fraction of the model's context window consumed (0.0–1.0).
+    pub context_utilization: f32,
+    /// Model identifier used for this turn (e.g., "claude-sonnet-4-20250514").
+    pub model: String,
+    /// Provider name (e.g., "anthropic").
+    pub provider: String,
 }
 
 /// Payload for `error`.
