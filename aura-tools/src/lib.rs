@@ -21,12 +21,14 @@ mod executor;
 pub mod fs_tools;
 pub mod registry;
 mod sandbox;
+pub mod tool;
 
 pub use error::ToolError;
 pub use executor::ToolExecutor;
 pub use fs_tools::{cmd_run_with_threshold, cmd_spawn, output_to_tool_result, ThresholdResult};
 pub use registry::{DefaultToolRegistry, ToolRegistry};
 pub use sandbox::Sandbox;
+pub use tool::{Tool, ToolContext};
 
 /// Tool configuration.
 #[derive(Debug, Clone)]

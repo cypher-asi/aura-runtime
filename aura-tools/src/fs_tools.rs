@@ -4,7 +4,10 @@
 
 use crate::error::ToolError;
 use crate::sandbox::Sandbox;
+use crate::tool::{Tool, ToolContext};
+use async_trait::async_trait;
 use aura_core::ToolResult;
+use aura_reasoner::ToolDefinition;
 use std::collections::HashMap;
 use std::fs;
 use std::os::windows::fs::MetadataExt;
@@ -517,6 +520,369 @@ fn wait_with_hard_timeout(
             ));
         }
         thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+// ============================================================================
+// Tool Trait Implementations
+// ============================================================================
+
+/// `fs_ls` tool: list directory contents.
+pub struct FsLsTool;
+
+#[async_trait]
+impl Tool for FsLsTool {
+    fn name(&self) -> &str {
+        "fs_ls"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "fs_ls".into(),
+            description:
+                "List directory contents. Returns files and directories with their types and sizes."
+                    .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the directory to list (relative to workspace root)"
+                    }
+                },
+                "required": ["path"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let path = args["path"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+        fs_ls(&ctx.sandbox, path)
+    }
+}
+
+/// `fs_read` tool: read file contents.
+pub struct FsReadTool;
+
+#[async_trait]
+impl Tool for FsReadTool {
+    fn name(&self) -> &str {
+        "fs_read"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "fs_read".into(),
+            description: "Read the contents of a file. Use this to examine source code, configuration files, and other text files.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to read (relative to workspace root)"
+                    },
+                    "max_bytes": {
+                        "type": "integer",
+                        "description": "Maximum bytes to read (default: 1MB). Useful for large files."
+                    }
+                },
+                "required": ["path"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let path = args["path"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+        let max_bytes = args["max_bytes"]
+            .as_u64()
+            .map_or(ctx.config.max_read_bytes, |n| {
+                usize::try_from(n).unwrap_or(usize::MAX)
+            });
+        let max_bytes = max_bytes.min(ctx.config.max_read_bytes);
+        fs_read(&ctx.sandbox, path, max_bytes)
+    }
+}
+
+/// `fs_stat` tool: get file/directory metadata.
+pub struct FsStatTool;
+
+#[async_trait]
+impl Tool for FsStatTool {
+    fn name(&self) -> &str {
+        "fs_stat"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "fs_stat".into(),
+            description: "Get file or directory metadata including size, type, and permissions."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file or directory (relative to workspace root)"
+                    }
+                },
+                "required": ["path"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let path = args["path"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+        fs_stat(&ctx.sandbox, path)
+    }
+}
+
+/// `fs_write` tool: write content to a file.
+pub struct FsWriteTool;
+
+#[async_trait]
+impl Tool for FsWriteTool {
+    fn name(&self) -> &str {
+        "fs_write"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "fs_write".into(),
+            description:
+                "Write content to a file. Creates the file if it doesn't exist, overwrites if it does."
+                    .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to write (relative to workspace root)"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    },
+                    "create_dirs": {
+                        "type": "boolean",
+                        "description": "Create parent directories if they don't exist (default: false)"
+                    }
+                },
+                "required": ["path", "content"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let path = args["path"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+        let content = args["content"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'content' argument".into()))?;
+        let create_dirs = args["create_dirs"].as_bool().unwrap_or(false);
+        fs_write(&ctx.sandbox, path, content, create_dirs)
+    }
+}
+
+/// `fs_edit` tool: edit a file by replacing text.
+pub struct FsEditTool;
+
+#[async_trait]
+impl Tool for FsEditTool {
+    fn name(&self) -> &str {
+        "fs_edit"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "fs_edit".into(),
+            description: "Edit an existing file by replacing a specific portion of text. Use this for targeted modifications.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to edit (relative to workspace root)"
+                    },
+                    "old_text": {
+                        "type": "string",
+                        "description": "The exact text to find and replace"
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "The text to replace it with"
+                    }
+                },
+                "required": ["path", "old_text", "new_text"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let path = args["path"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?;
+        let old_text = args["old_text"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'old_text' argument".into()))?;
+        let new_text = args["new_text"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'new_text' argument".into()))?;
+        fs_edit(&ctx.sandbox, path, old_text, new_text)
+    }
+}
+
+/// `search_code` tool: search for patterns in code.
+pub struct SearchCodeTool;
+
+#[async_trait]
+impl Tool for SearchCodeTool {
+    fn name(&self) -> &str {
+        "search_code"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "search_code".into(),
+            description: "Search for patterns in code using regex. Useful for finding function definitions, usages, and patterns across files.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Search pattern (regex supported)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search in (default: workspace root)"
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "Glob pattern for files to search (e.g., '*.rs', '*.ts')"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 100)"
+                    }
+                },
+                "required": ["pattern"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let pattern = args["pattern"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("missing 'pattern' argument".into()))?;
+        let path = args["path"].as_str();
+        let file_pattern = args["file_pattern"].as_str();
+        let max_results = args["max_results"]
+            .as_u64()
+            .map_or(100, |n| usize::try_from(n).unwrap_or(100));
+        search_code(&ctx.sandbox, pattern, path, file_pattern, max_results)
+    }
+}
+
+/// `cmd_run` tool: run a shell command.
+pub struct CmdRunTool;
+
+#[async_trait]
+impl Tool for CmdRunTool {
+    fn name(&self) -> &str {
+        "cmd_run"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "cmd_run".into(),
+            description: "Run a shell command. Use with caution. Only allowed commands will execute."
+                .into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "program": {
+                        "type": "string",
+                        "description": "The program/command to run"
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Command arguments"
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory (default: workspace root)"
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Timeout in milliseconds (default: 30000)"
+                    }
+                },
+                "required": ["program"]
+            }),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &ToolContext,
+        args: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let program = args["program"].as_str().ok_or_else(|| {
+            ToolError::InvalidArguments("missing 'program' argument".into())
+        })?;
+
+        if !ctx.config.command_allowlist.is_empty()
+            && !ctx.config.command_allowlist.contains(&program.to_string())
+        {
+            return Err(ToolError::CommandNotAllowed(program.into()));
+        }
+
+        let cmd_args: Vec<String> = args["args"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let cwd = args["cwd"].as_str();
+        let timeout_ms = args["timeout_ms"]
+            .as_u64()
+            .unwrap_or(ctx.config.sync_threshold_ms);
+
+        cmd_run(&ctx.sandbox, program, &cmd_args, cwd, timeout_ms)
     }
 }
 

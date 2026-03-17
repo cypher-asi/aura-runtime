@@ -2,6 +2,7 @@
 //!
 //! Provides tool definitions and schemas for the model to use.
 
+use crate::tool::{builtin_tools, read_only_builtin_tools};
 use aura_reasoner::ToolDefinition;
 use std::collections::HashMap;
 
@@ -28,6 +29,9 @@ pub trait ToolRegistry: Send + Sync {
 // ============================================================================
 
 /// Default tool registry with built-in tools.
+///
+/// Populates definitions from [`Tool::definition()`](crate::tool::Tool::definition)
+/// rather than maintaining separate schema functions.
 pub struct DefaultToolRegistry {
     tools: HashMap<String, ToolDefinition>,
 }
@@ -37,20 +41,10 @@ impl DefaultToolRegistry {
     #[must_use]
     pub fn new() -> Self {
         let mut tools = HashMap::new();
-
-        // Filesystem tools
-        tools.insert("fs_ls".into(), fs_ls_schema());
-        tools.insert("fs_read".into(), fs_read_schema());
-        tools.insert("fs_stat".into(), fs_stat_schema());
-        tools.insert("fs_write".into(), fs_write_schema());
-        tools.insert("fs_edit".into(), fs_edit_schema());
-
-        // Search tools
-        tools.insert("search_code".into(), search_code_schema());
-
-        // Command tools
-        tools.insert("cmd_run".into(), cmd_run_schema());
-
+        for tool in builtin_tools() {
+            let def = tool.definition();
+            tools.insert(def.name.clone(), def);
+        }
         Self { tools }
     }
 
@@ -58,13 +52,10 @@ impl DefaultToolRegistry {
     #[must_use]
     pub fn read_only() -> Self {
         let mut tools = HashMap::new();
-
-        // Only safe read-only tools
-        tools.insert("fs_ls".into(), fs_ls_schema());
-        tools.insert("fs_read".into(), fs_read_schema());
-        tools.insert("fs_stat".into(), fs_stat_schema());
-        tools.insert("search_code".into(), search_code_schema());
-
+        for tool in read_only_builtin_tools() {
+            let def = tool.definition();
+            tools.insert(def.name.clone(), def);
+        }
         Self { tools }
     }
 
@@ -100,186 +91,6 @@ impl ToolRegistry for DefaultToolRegistry {
 
     fn get(&self, name: &str) -> Option<ToolDefinition> {
         self.tools.get(name).cloned()
-    }
-}
-
-// ============================================================================
-// Tool Schemas
-// ============================================================================
-
-/// Schema for `fs_ls` tool.
-fn fs_ls_schema() -> ToolDefinition {
-    ToolDefinition {
-        name: "fs_ls".into(),
-        description:
-            "List directory contents. Returns files and directories with their types and sizes."
-                .into(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the directory to list (relative to workspace root)"
-                }
-            },
-            "required": ["path"]
-        }),
-    }
-}
-
-/// Schema for `fs_read` tool.
-fn fs_read_schema() -> ToolDefinition {
-    ToolDefinition {
-        name: "fs_read".into(),
-        description: "Read the contents of a file. Use this to examine source code, configuration files, and other text files.".into(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to read (relative to workspace root)"
-                },
-                "max_bytes": {
-                    "type": "integer",
-                    "description": "Maximum bytes to read (default: 1MB). Useful for large files."
-                }
-            },
-            "required": ["path"]
-        }),
-    }
-}
-
-/// Schema for `fs_stat` tool.
-fn fs_stat_schema() -> ToolDefinition {
-    ToolDefinition {
-        name: "fs_stat".into(),
-        description: "Get file or directory metadata including size, type, and permissions.".into(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file or directory (relative to workspace root)"
-                }
-            },
-            "required": ["path"]
-        }),
-    }
-}
-
-/// Schema for `fs_write` tool.
-fn fs_write_schema() -> ToolDefinition {
-    ToolDefinition {
-        name: "fs_write".into(),
-        description:
-            "Write content to a file. Creates the file if it doesn't exist, overwrites if it does."
-                .into(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to write (relative to workspace root)"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content to write to the file"
-                },
-                "create_dirs": {
-                    "type": "boolean",
-                    "description": "Create parent directories if they don't exist (default: false)"
-                }
-            },
-            "required": ["path", "content"]
-        }),
-    }
-}
-
-/// Schema for `fs_edit` tool.
-fn fs_edit_schema() -> ToolDefinition {
-    ToolDefinition {
-        name: "fs_edit".into(),
-        description: "Edit an existing file by replacing a specific portion of text. Use this for targeted modifications.".into(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to edit (relative to workspace root)"
-                },
-                "old_text": {
-                    "type": "string",
-                    "description": "The exact text to find and replace"
-                },
-                "new_text": {
-                    "type": "string",
-                    "description": "The text to replace it with"
-                }
-            },
-            "required": ["path", "old_text", "new_text"]
-        }),
-    }
-}
-
-/// Schema for `search_code` tool.
-fn search_code_schema() -> ToolDefinition {
-    ToolDefinition {
-        name: "search_code".into(),
-        description: "Search for patterns in code using regex. Useful for finding function definitions, usages, and patterns across files.".into(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Search pattern (regex supported)"
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Directory to search in (default: workspace root)"
-                },
-                "file_pattern": {
-                    "type": "string",
-                    "description": "Glob pattern for files to search (e.g., '*.rs', '*.ts')"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return (default: 100)"
-                }
-            },
-            "required": ["pattern"]
-        }),
-    }
-}
-
-/// Schema for `cmd_run` tool.
-fn cmd_run_schema() -> ToolDefinition {
-    ToolDefinition {
-        name: "cmd_run".into(),
-        description: "Run a shell command. Use with caution. Only allowed commands will execute."
-            .into(),
-        input_schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "program": {
-                    "type": "string",
-                    "description": "The program/command to run"
-                },
-                "args": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Command arguments"
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Working directory (default: workspace root)"
-                },
-                "timeout_ms": {
-                    "type": "integer",
-                    "description": "Timeout in milliseconds (default: 30000)"
-                }
-            },
-            "required": ["program"]
-        }),
     }
 }
 
@@ -348,7 +159,6 @@ mod tests {
         let registry = DefaultToolRegistry::new();
 
         for tool in registry.list() {
-            // Each tool should have valid JSON Schema structure
             assert!(tool.input_schema.is_object());
             let schema = tool.input_schema.as_object().unwrap();
             assert!(schema.contains_key("type"));
