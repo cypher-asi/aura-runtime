@@ -44,7 +44,7 @@ pub fn fs_ls(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError> {
     }
 
     let output = entries.join("\n");
-    Ok(ToolResult::success("fs.ls", output))
+    Ok(ToolResult::success("fs_ls", output))
 }
 
 /// Read file contents.
@@ -69,7 +69,7 @@ pub fn fs_read(sandbox: &Sandbox, path: &str, max_bytes: usize) -> Result<ToolRe
     }
 
     let contents = fs::read(&resolved)?;
-    Ok(ToolResult::success("fs.read", contents).with_metadata("size", size.to_string()))
+    Ok(ToolResult::success("fs_read", contents).with_metadata("size", size.to_string()))
 }
 
 /// Get file metadata.
@@ -101,7 +101,7 @@ pub fn fs_stat(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError> {
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
 
-    let mut tool_result = ToolResult::success("fs.stat", output.join("\n"));
+    let mut tool_result = ToolResult::success("fs_stat", output.join("\n"));
     tool_result.metadata = result_metadata;
     Ok(tool_result)
 }
