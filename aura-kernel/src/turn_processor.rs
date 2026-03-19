@@ -35,10 +35,21 @@ use futures_util::StreamExt;
 use aura_store::Store;
 use aura_tools::ToolRegistry;
 use bytes::Bytes;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
+
+/// Per-turn cache for tool results.
+///
+/// Keyed by `"tool_name\0canonical_args_json"`. Only populated for
+/// read-only tools (`fs_ls`, `fs_read`, `fs_stat`, `fs_find`, `search_code`)
+/// to avoid suppressing side-effectful calls.
+type ToolCache = HashMap<String, ExecutedToolCall>;
+
+/// Tools whose results are safe to cache (no side effects).
+const CACHEABLE_TOOLS: &[&str] = &["fs_ls", "fs_read", "fs_stat", "fs_find", "search_code"];
 
 // ============================================================================
 // Configuration
@@ -520,6 +531,7 @@ where
         let mut final_message = None;
         let provider_name = self.provider.name().to_string();
         let model_name = self.config.model.clone();
+        let mut tool_cache: ToolCache = HashMap::new();
 
         for step in 0..self.config.max_steps {
             if self.is_cancelled() {
@@ -582,7 +594,7 @@ where
                     break;
                 }
                 StopReason::ToolUse => {
-                    let executed_tools = self.execute_tool_calls(&response.message, agent_id).await?;
+                    let executed_tools = self.execute_tool_calls(&response.message, agent_id, &mut tool_cache).await?;
 
                     if executed_tools.iter().any(|t| t.is_error) {
                         had_failures = true;
@@ -787,15 +799,18 @@ where
         accumulator.into_response(input_tokens, latency_ms)
     }
 
-    /// Execute tool calls from a model message concurrently.
+    /// Execute tool calls from a model message concurrently, with caching.
     ///
-    /// Policy checks are performed synchronously first. Permitted tools are
-    /// then executed in parallel via `futures::future::join_all`, reducing
-    /// wall-clock latency when the model issues multiple independent calls.
+    /// Policy checks are performed synchronously first. Cacheable read-only
+    /// tools are checked against `tool_cache`; cache hits are returned without
+    /// re-execution. Permitted tools are then executed in parallel via
+    /// `futures::future::join_all`. Successful cacheable results are stored
+    /// back into the cache for future steps within the same turn.
     async fn execute_tool_calls(
         &self,
         message: &Message,
         agent_id: AgentId,
+        tool_cache: &mut ToolCache,
     ) -> anyhow::Result<Vec<ExecutedToolCall>> {
         let workspace = self.agent_workspace(&agent_id);
 
@@ -804,8 +819,9 @@ where
             error!(error = %e, "Failed to create workspace");
         }
 
-        // Phase 1: policy checks (synchronous) — partition into denied / allowed
+        // Phase 1: policy checks + cache lookups
         let mut denied = Vec::new();
+        let mut cached = Vec::new();
         let mut to_execute: Vec<(String, String, serde_json::Value)> = Vec::new();
 
         for block in &message.content {
@@ -824,20 +840,32 @@ where
                             is_error: true,
                             metadata: Default::default(),
                         });
+                        continue;
                     }
                     PermissionLevel::AlwaysAsk => {
                         debug!(tool = %name, "Tool requires approval (AlwaysAsk)");
-                        to_execute.push((id.clone(), name.clone(), input.clone()));
                     }
                     PermissionLevel::AskOnce => {
                         debug!(tool = %name, "Tool allowed (AskOnce)");
-                        to_execute.push((id.clone(), name.clone(), input.clone()));
                     }
                     PermissionLevel::AlwaysAllow => {
                         debug!(tool = %name, "Tool allowed (AlwaysAllow)");
-                        to_execute.push((id.clone(), name.clone(), input.clone()));
                     }
                 }
+
+                // Check cache for read-only tools
+                if CACHEABLE_TOOLS.contains(&name.as_str()) {
+                    let cache_key = make_cache_key(name, input);
+                    if let Some(hit) = tool_cache.get(&cache_key) {
+                        debug!(tool = %name, "Cache hit — returning cached result");
+                        let mut cloned = hit.clone();
+                        cloned.tool_use_id = id.clone();
+                        cached.push(cloned);
+                        continue;
+                    }
+                }
+
+                to_execute.push((id.clone(), name.clone(), input.clone()));
             }
         }
 
@@ -905,8 +933,17 @@ where
 
         let executed = futures_util::future::join_all(futures).await;
 
-        // Combine denied + executed, preserving original order
+        // Phase 3: populate cache with successful cacheable results
+        for result in &executed {
+            if !result.is_error && CACHEABLE_TOOLS.contains(&result.tool_name.as_str()) {
+                let cache_key = make_cache_key(&result.tool_name, &result.tool_args);
+                tool_cache.insert(cache_key, result.clone());
+            }
+        }
+
+        // Combine denied + cached + executed
         let mut results = denied;
+        results.extend(cached);
         results.extend(executed);
         Ok(results)
     }
@@ -974,6 +1011,15 @@ where
             .effects(effects)
             .build()
     }
+}
+
+/// Build a deterministic cache key from tool name and arguments.
+///
+/// Uses canonical JSON serialization so equivalent argument objects
+/// produce the same key regardless of property ordering.
+fn make_cache_key(tool_name: &str, args: &serde_json::Value) -> String {
+    let canonical = serde_json::to_string(args).unwrap_or_default();
+    format!("{tool_name}\0{canonical}")
 }
 
 /// Classify an LLM error message into a machine-readable code and recoverability.
