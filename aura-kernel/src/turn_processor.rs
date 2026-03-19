@@ -787,13 +787,16 @@ where
         accumulator.into_response(input_tokens, latency_ms)
     }
 
-    /// Execute tool calls from a model message.
+    /// Execute tool calls from a model message concurrently.
+    ///
+    /// Policy checks are performed synchronously first. Permitted tools are
+    /// then executed in parallel via `futures::future::join_all`, reducing
+    /// wall-clock latency when the model issues multiple independent calls.
     async fn execute_tool_calls(
         &self,
         message: &Message,
         agent_id: AgentId,
     ) -> anyhow::Result<Vec<ExecutedToolCall>> {
-        let mut results = Vec::new();
         let workspace = self.agent_workspace(&agent_id);
 
         // Ensure workspace exists
@@ -801,17 +804,19 @@ where
             error!(error = %e, "Failed to create workspace");
         }
 
+        // Phase 1: policy checks (synchronous) — partition into denied / allowed
+        let mut denied = Vec::new();
+        let mut to_execute: Vec<(String, String, serde_json::Value)> = Vec::new();
+
         for block in &message.content {
             if let ContentBlock::ToolUse { id, name, input } = block {
-                debug!(tool = %name, id = %id, "Executing tool");
+                debug!(tool = %name, id = %id, "Checking tool permission");
 
-                // 1. Check policy
                 let permission = self.policy.check_tool_permission(name);
-
                 match permission {
                     PermissionLevel::Deny => {
                         warn!(tool = %name, "Tool denied by policy");
-                        results.push(ExecutedToolCall {
+                        denied.push(ExecutedToolCall {
                             tool_use_id: id.clone(),
                             tool_name: name.clone(),
                             tool_args: input.clone(),
@@ -819,30 +824,36 @@ where
                             is_error: true,
                             metadata: Default::default(),
                         });
-                        continue;
                     }
                     PermissionLevel::AlwaysAsk => {
-                        // For now, treat AlwaysAsk as requiring approval
-                        // The CLI will handle the approval flow
                         debug!(tool = %name, "Tool requires approval (AlwaysAsk)");
+                        to_execute.push((id.clone(), name.clone(), input.clone()));
                     }
                     PermissionLevel::AskOnce => {
-                        // For now, allow after first ask
                         debug!(tool = %name, "Tool allowed (AskOnce)");
+                        to_execute.push((id.clone(), name.clone(), input.clone()));
                     }
                     PermissionLevel::AlwaysAllow => {
                         debug!(tool = %name, "Tool allowed (AlwaysAllow)");
+                        to_execute.push((id.clone(), name.clone(), input.clone()));
                     }
                 }
+            }
+        }
 
-                // 2. Execute tool
-                let tool_call = ToolCall::new(name.clone(), input.clone());
-                let action = Action::delegate_tool(&tool_call);
-                let ctx = ExecuteContext::new(agent_id, action.action_id, workspace.clone());
+        // Phase 2: execute permitted tools in parallel
+        let futures: Vec<_> = to_execute
+            .into_iter()
+            .map(|(id, name, input)| {
+                let workspace = workspace.clone();
+                async move {
+                    let tool_call = ToolCall::new(name.clone(), input.clone());
+                    let action = Action::delegate_tool(&tool_call);
+                    let ctx = ExecuteContext::new(agent_id, action.action_id, workspace);
 
-                match self.executor.execute(&ctx, &action).await {
-                    effect if effect.status == EffectStatus::Committed => {
-                        // Parse the tool result from the effect payload
+                    let effect = self.executor.execute(&ctx, &action).await;
+
+                    if effect.status == EffectStatus::Committed {
                         if let Ok(tool_result) =
                             serde_json::from_slice::<ToolResult>(&effect.payload)
                         {
@@ -853,27 +864,25 @@ where
                                     String::from_utf8_lossy(&tool_result.stdout).to_string(),
                                 )
                             };
-                            results.push(ExecutedToolCall {
-                                tool_use_id: id.clone(),
-                                tool_name: name.clone(),
-                                tool_args: input.clone(),
+                            ExecutedToolCall {
+                                tool_use_id: id,
+                                tool_name: name,
+                                tool_args: input,
                                 result: content,
                                 is_error: !tool_result.ok,
                                 metadata: tool_result.metadata,
-                            });
+                            }
                         } else {
-                            results.push(ExecutedToolCall {
-                                tool_use_id: id.clone(),
-                                tool_name: name.clone(),
-                                tool_args: input.clone(),
+                            ExecutedToolCall {
+                                tool_use_id: id,
+                                tool_name: name,
+                                tool_args: input,
                                 result: ToolResultContent::text("Tool executed successfully"),
                                 is_error: false,
                                 metadata: Default::default(),
-                            });
+                            }
                         }
-                    }
-                    effect => {
-                        // Tool failed
+                    } else {
                         let error_msg = if let Ok(tool_result) =
                             serde_json::from_slice::<ToolResult>(&effect.payload)
                         {
@@ -881,19 +890,24 @@ where
                         } else {
                             "Tool execution failed".to_string()
                         };
-                        results.push(ExecutedToolCall {
-                            tool_use_id: id.clone(),
-                            tool_name: name.clone(),
-                            tool_args: input.clone(),
+                        ExecutedToolCall {
+                            tool_use_id: id,
+                            tool_name: name,
+                            tool_args: input,
                             result: ToolResultContent::text(error_msg),
                             is_error: true,
                             metadata: Default::default(),
-                        });
+                        }
                     }
                 }
-            }
-        }
+            })
+            .collect();
 
+        let executed = futures_util::future::join_all(futures).await;
+
+        // Combine denied + executed, preserving original order
+        let mut results = denied;
+        results.extend(executed);
         Ok(results)
     }
 
