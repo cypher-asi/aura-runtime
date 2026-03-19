@@ -84,7 +84,7 @@ impl Default for TurnConfig {
             workspace_base: PathBuf::from("./workspaces"),
             replay_mode: false,
             temperature: Some(0.7),
-            max_tokens: 4096,
+            max_tokens: 16_384,
         }
     }
 }
