@@ -83,7 +83,7 @@ impl Default for TurnConfig {
             system_prompt: default_system_prompt(),
             workspace_base: PathBuf::from("./workspaces"),
             replay_mode: false,
-            temperature: Some(0.7),
+            temperature: Some(0.2),
             max_tokens: 16_384,
         }
     }
@@ -519,7 +519,7 @@ where
                 .messages(messages.clone())
                 .tools(tools.clone())
                 .max_tokens(self.config.max_tokens)
-                .temperature(self.config.temperature.unwrap_or(0.7))
+                .temperature(self.config.temperature.unwrap_or(0.2))
                 .build();
 
             // 2. Call model (skip in replay mode)
