@@ -49,6 +49,9 @@ pub struct SessionInit {
     /// Workspace directory path.
     #[serde(default)]
     pub workspace: Option<String>,
+    /// JWT auth token for proxy routing.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// Payload for `user_message`.

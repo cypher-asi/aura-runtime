@@ -9,7 +9,7 @@ use aura_store::Store;
 use aura_tools::ToolConfig;
 use axum::{
     extract::{ws::WebSocketUpgrade, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -213,12 +213,20 @@ async fn scan_record_handler(
 
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     State(state): State<RouterState>,
 ) -> impl IntoResponse {
+    let auth_token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(String::from);
+
     let ctx = WsContext {
         workspace_base: state.config.workspaces_path(),
         provider: state.provider.clone(),
         tool_config: state.tool_config.clone(),
+        auth_token,
     };
     ws.on_upgrade(move |socket| handle_ws_connection(socket, ctx))
 }

@@ -59,6 +59,8 @@ pub struct Session {
     pub tool_definitions: Vec<ToolDefinition>,
     /// Context window size in tokens (for utilization calculation).
     pub context_window_tokens: u64,
+    /// JWT auth token for proxy routing.
+    pub auth_token: Option<String>,
 }
 
 impl Session {
@@ -80,6 +82,7 @@ impl Session {
             initialized: false,
             tool_definitions: Vec::new(),
             context_window_tokens: 200_000,
+            auth_token: None,
         }
     }
 
@@ -106,6 +109,9 @@ impl Session {
         if let Some(workspace) = init.workspace {
             self.workspace = PathBuf::from(workspace);
         }
+        if let Some(token) = init.token {
+            self.auth_token = Some(token);
+        }
         self.initialized = true;
     }
 
@@ -121,6 +127,7 @@ impl Session {
             },
             max_tokens: self.max_tokens,
             max_context_tokens: Some(self.context_window_tokens),
+            auth_token: self.auth_token.clone(),
             ..AgentLoopConfig::default()
         }
     }
@@ -139,6 +146,8 @@ pub struct WsContext {
     pub provider: Arc<dyn ModelProvider + Send + Sync>,
     /// Tool configuration (fs/cmd permissions).
     pub tool_config: ToolConfig,
+    /// JWT auth token from the WebSocket upgrade request.
+    pub auth_token: Option<String>,
 }
 
 // ============================================================================
@@ -204,6 +213,7 @@ pub async fn handle_ws_connection(socket: WebSocket, ctx: WsContext) {
     });
 
     let mut session = Session::new(ctx.workspace_base.clone());
+    session.auth_token = ctx.auth_token.clone();
     info!(session_id = %session.session_id, "WebSocket connection opened");
 
     let mut active_turn: Option<ActiveTurn> = None;
