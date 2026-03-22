@@ -12,7 +12,14 @@ use std::fs;
 use std::os::windows::fs::MetadataExt;
 use tracing::{debug, instrument};
 
+/// Directories that are filtered from `fs_ls` output to reduce noise.
+const LS_NOISE_DIRS: &[&str] = &["node_modules", "target", ".git", "__pycache__"];
+
 /// List directory contents.
+///
+/// Results are sorted with directories first, then alphabetical within each
+/// group. Noise directories (`node_modules`, `target`, `.git`, `__pycache__`)
+/// are omitted from output.
 #[instrument(skip(sandbox), fields(path = %path))]
 pub fn fs_ls(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError> {
     let resolved = sandbox.resolve_existing(path)?;
@@ -24,21 +31,35 @@ pub fn fs_ls(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError> {
         )));
     }
 
-    let mut entries = Vec::new();
+    let mut dirs: Vec<(String, u64)> = Vec::new();
+    let mut files: Vec<(String, u64, &str)> = Vec::new();
+
     for entry in fs::read_dir(&resolved)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
         let metadata = entry.metadata()?;
 
-        let entry_type = if metadata.is_dir() {
-            "dir"
+        if metadata.is_dir() {
+            if LS_NOISE_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            dirs.push((name, metadata.len()));
         } else if metadata.is_file() {
-            "file"
+            files.push((name, metadata.len(), "file"));
         } else {
-            "other"
-        };
+            files.push((name, metadata.len(), "other"));
+        }
+    }
 
-        entries.push(format!("{}\t{}\t{}", entry_type, metadata.len(), name));
+    dirs.sort_by(|a, b| a.0.cmp(&b.0));
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut entries: Vec<String> = Vec::with_capacity(dirs.len() + files.len());
+    for (name, size) in &dirs {
+        entries.push(format!("dir\t{size}\t{name}"));
+    }
+    for (name, size, kind) in &files {
+        entries.push(format!("{kind}\t{size}\t{name}"));
     }
 
     let output = entries.join("\n");
@@ -142,7 +163,34 @@ pub fn fs_stat(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError> {
     Ok(tool_result)
 }
 
+/// Check whether `content` has unbalanced `{}`/`()` pairs, which may
+/// indicate truncated output from an LLM.
+fn looks_truncated(content: &str) -> bool {
+    let mut brace_depth: i64 = 0;
+    let mut paren_depth: i64 = 0;
+    for ch in content.chars() {
+        match ch {
+            '{' => brace_depth += 1,
+            '}' => brace_depth -= 1,
+            '(' => paren_depth += 1,
+            ')' => paren_depth -= 1,
+            _ => {}
+        }
+    }
+    brace_depth != 0 || paren_depth != 0
+}
+
 /// Write content to a file.
+///
+/// Parent directories are always created automatically (matching aura-app
+/// behaviour). The `create_dirs` parameter is kept for backward compatibility
+/// but effectively defaults to `true`.
+///
+/// Safety heuristics:
+/// - Rejects writes that would replace an existing file with content < 10%
+///   of the original size.
+/// - Warns (via metadata) when the content has unbalanced braces/parens.
+/// - Performs post-write verification of byte count.
 #[instrument(skip(sandbox, content), fields(path = %path))]
 pub fn fs_write(
     sandbox: &Sandbox,
@@ -150,38 +198,121 @@ pub fn fs_write(
     content: &str,
     create_dirs: bool,
 ) -> Result<ToolResult, ToolError> {
+    let _ = create_dirs; // kept for API compat; always creates dirs
     let resolved = sandbox.resolve_new(path)?;
     debug!(?resolved, "Writing file");
 
     let file_existed = resolved.exists();
+    let existing_size = if file_existed {
+        usize::try_from(fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0)).unwrap_or(usize::MAX)
+    } else {
+        0
+    };
 
-    // Create parent directories if requested
-    if create_dirs {
-        if let Some(parent) = resolved.parent() {
-            fs::create_dir_all(parent)?;
-        }
-    } else if let Some(parent) = resolved.parent() {
+    // Truncation heuristic: reject if new content < 10% of existing file
+    if file_existed && existing_size > 0 && content.len() < existing_size / 10 {
+        return Err(ToolError::InvalidArguments(
+            "New content is less than 10% of existing file size. \
+             This likely indicates truncated output."
+                .to_string(),
+        ));
+    }
+
+    // Always create parent directories
+    if let Some(parent) = resolved.parent() {
         if !parent.exists() {
-            return Err(ToolError::PathNotFound(
-                parent.to_string_lossy().to_string(),
-            ));
+            fs::create_dir_all(parent)?;
         }
     }
 
     fs::write(&resolved, content)?;
 
+    // Post-write verification
+    let on_disk_size = usize::try_from(fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0))
+        .unwrap_or(usize::MAX);
+    if on_disk_size != content.len() {
+        return Err(ToolError::InvalidArguments(format!(
+            "Post-write verification failed: wrote {} bytes but file is {} bytes on disk",
+            content.len(),
+            on_disk_size
+        )));
+    }
+
     let bytes_written = content.len();
-    Ok(
+    let truncated_warning = looks_truncated(content);
+
+    let mut result =
         ToolResult::success("fs_write", format!("Wrote {bytes_written} bytes to {path}"))
             .with_metadata("bytes_written", bytes_written.to_string())
-            .with_metadata("file_existed", file_existed.to_string()),
-    )
+            .with_metadata("file_existed", file_existed.to_string());
+
+    if truncated_warning {
+        result = result.with_metadata(
+            "warning",
+            "Content has unbalanced braces/parentheses – may be truncated".to_string(),
+        );
+    }
+
+    Ok(result)
+}
+
+/// Try fuzzy (trimmed, line-wise) matching when exact match fails.
+///
+/// Returns `Some((start_byte, end_byte))` of the *original* content slice that
+/// matches the trimmed `old_text` lines. Only succeeds when exactly one
+/// contiguous block matches.
+fn fuzzy_line_match(content: &str, old_text: &str) -> Result<Option<(usize, usize)>, String> {
+    let needle_lines: Vec<&str> = old_text.lines().map(str::trim).collect();
+    if needle_lines.is_empty() {
+        return Ok(None);
+    }
+
+    let content_lines: Vec<&str> = content.lines().collect();
+    let mut matches: Vec<(usize, usize)> = Vec::new();
+
+    'outer: for start in 0..content_lines.len() {
+        if start + needle_lines.len() > content_lines.len() {
+            break;
+        }
+        for (i, needle_line) in needle_lines.iter().enumerate() {
+            if content_lines[start + i].trim() != *needle_line {
+                continue 'outer;
+            }
+        }
+        // Compute byte offsets in the original content
+        let byte_start: usize = content_lines[..start].iter().map(|l| l.len() + 1).sum();
+        let match_end_line = start + needle_lines.len() - 1;
+        let byte_end: usize = content_lines[..match_end_line]
+            .iter()
+            .map(|l| l.len() + 1)
+            .sum::<usize>()
+            + content_lines[match_end_line].len();
+        matches.push((byte_start, byte_end));
+    }
+
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(Some(matches[0])),
+        n => Err(format!(
+            "Found {n} occurrences of the search text (fuzzy match). \
+             Use replace_all=true to replace all, or make the search text more specific."
+        )),
+    }
 }
 
 /// Edit a file by replacing text.
 ///
-/// When `replace_all` is `false` (default), only the first occurrence is replaced.
-/// When `true`, all occurrences are replaced.
+/// When `replace_all` is `false` (default), exactly one occurrence must exist
+/// (returns an error if there are 0 or 2+ matches). When `true`, all
+/// occurrences are replaced.
+///
+/// If the exact match fails, a fuzzy line-wise trimmed match is attempted.
+///
+/// Safety guards:
+/// - **Shrinkage guard**: rejects edits that would reduce the file to < 20%
+///   of its original size.
+/// - **CRLF normalization**: matching is performed on LF-normalized text; the
+///   original line ending style is restored on write.
 #[instrument(skip(sandbox, old_text, new_text), fields(path = %path))]
 pub fn fs_edit(
     sandbox: &Sandbox,
@@ -197,22 +328,73 @@ pub fn fs_edit(
         return Err(ToolError::InvalidArguments(format!("{path} is not a file")));
     }
 
-    let content = fs::read_to_string(&resolved)?;
+    let raw_content = fs::read_to_string(&resolved)?;
 
-    let count = content.matches(old_text).count();
-    if count == 0 {
+    // Detect CRLF and normalise to LF for matching
+    let had_crlf = raw_content.contains("\r\n");
+    let content = if had_crlf {
+        raw_content.replace("\r\n", "\n")
+    } else {
+        raw_content
+    };
+    let old_text_norm = old_text.replace("\r\n", "\n");
+    let new_text_norm = new_text.replace("\r\n", "\n");
+
+    let exact_count = content.matches(old_text_norm.as_str()).count();
+
+    let (new_content, replacements) = if exact_count == 0 {
+        // Try fuzzy line-wise match
+        match fuzzy_line_match(&content, &old_text_norm) {
+            Ok(Some((start, end))) => {
+                let mut buf = String::with_capacity(content.len());
+                buf.push_str(&content[..start]);
+                buf.push_str(&new_text_norm);
+                buf.push_str(&content[end..]);
+                (buf, 1usize)
+            }
+            Ok(None) => {
+                return Err(ToolError::InvalidArguments(
+                    "The specified text was not found in the file".to_string(),
+                ));
+            }
+            Err(msg) => {
+                return Err(ToolError::InvalidArguments(msg));
+            }
+        }
+    } else if !replace_all && exact_count > 1 {
+        return Err(ToolError::InvalidArguments(format!(
+            "Found {exact_count} occurrences of the search text. \
+             Use replace_all=true to replace all, or make the search text more specific."
+        )));
+    } else if replace_all {
+        (
+            content.replace(old_text_norm.as_str(), &new_text_norm),
+            exact_count,
+        )
+    } else {
+        (
+            content.replacen(old_text_norm.as_str(), &new_text_norm, 1),
+            1,
+        )
+    };
+
+    // Shrinkage guard
+    if !content.is_empty() && new_content.len() < content.len() / 5 {
         return Err(ToolError::InvalidArguments(
-            "The specified text was not found in the file".to_string(),
+            "Edit would reduce file to less than 20% of original size. \
+             This likely indicates truncated content."
+                .to_string(),
         ));
     }
 
-    let (new_content, replacements) = if replace_all {
-        (content.replace(old_text, new_text), count)
+    // Restore CRLF if the original file used it
+    let final_content = if had_crlf {
+        new_content.replace('\n', "\r\n")
     } else {
-        (content.replacen(old_text, new_text, 1), 1)
+        new_content
     };
 
-    fs::write(&resolved, &new_content)?;
+    fs::write(&resolved, &final_content)?;
 
     Ok(ToolResult::success(
         "fs_edit",
@@ -221,7 +403,66 @@ pub fn fs_edit(
     .with_metadata("replacements", replacements.to_string()))
 }
 
+/// Maximum compiled regex size (bytes) accepted by `search_code`.
+const SEARCH_REGEX_SIZE_LIMIT: usize = 1_000_000;
+
+/// Directories automatically skipped during code search.
+const SEARCH_SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    ".git",
+    "__pycache__",
+    "dist",
+    "build",
+    ".next",
+    "vendor",
+    ".venv",
+    "coverage",
+    ".tox",
+    ".mypy_cache",
+];
+
+/// Format a single match with context lines.
+fn format_match_with_context(
+    relative_path: &str,
+    lines: &[&str],
+    line_idx: usize,
+    context: usize,
+) -> String {
+    use std::fmt::Write;
+
+    let start = line_idx.saturating_sub(context);
+    let end = (line_idx + context + 1).min(lines.len());
+    let mut block = format!("{relative_path}:{}", line_idx + 1);
+    for (ctx_idx, ctx_line) in lines[start..end].iter().enumerate() {
+        let abs_idx = start + ctx_idx;
+        let marker = if abs_idx == line_idx { ">" } else { " " };
+        let _ = write!(block, "\n{marker} {:>4}|{ctx_line}", abs_idx + 1);
+    }
+    block
+}
+
+/// Build a diagnostic message when `search_code` finds zero matches.
+fn zero_match_diagnostic(sandbox: &Sandbox, path: Option<&str>, pattern: &str) -> String {
+    use std::fmt::Write;
+
+    let mut msg = String::from("No matches found");
+    if let Some(p) = path {
+        let resolved = sandbox.resolve(p);
+        if resolved.is_err() || !resolved.as_ref().is_ok_and(|r| r.exists()) {
+            let _ = write!(msg, ". Note: path '{p}' does not exist");
+        }
+    }
+    if pattern.contains('\\') || pattern.contains('[') || pattern.contains('(') {
+        msg.push_str(". Tip: check that special regex characters are escaped correctly");
+    }
+    msg
+}
+
 /// Search for patterns in code.
+///
+/// Supports a `context_lines` parameter (0–10) that, when > 0, includes
+/// surrounding lines with `>` marking each match line.
 #[instrument(skip(sandbox), fields(pattern = %pattern))]
 pub fn search_code(
     sandbox: &Sandbox,
@@ -229,9 +470,12 @@ pub fn search_code(
     path: Option<&str>,
     file_pattern: Option<&str>,
     max_results: usize,
+    context_lines: usize,
 ) -> Result<ToolResult, ToolError> {
     use regex::Regex;
     use walkdir::WalkDir;
+
+    let context_lines = context_lines.min(10);
 
     let search_root = match path {
         Some(p) => sandbox.resolve_existing(p)?,
@@ -243,9 +487,14 @@ pub fn search_code(
     let regex = Regex::new(pattern)
         .map_err(|e| ToolError::InvalidArguments(format!("Invalid regex: {e}")))?;
 
+    if regex.as_str().len() > SEARCH_REGEX_SIZE_LIMIT {
+        return Err(ToolError::InvalidArguments(format!(
+            "Regex pattern exceeds size limit of {SEARCH_REGEX_SIZE_LIMIT} bytes"
+        )));
+    }
+
     let file_pattern_regex = file_pattern
         .map(|p| {
-            // Convert glob-like pattern to regex
             let regex_pattern = p.replace('.', r"\.").replace('*', ".*").replace('?', ".");
             Regex::new(&format!("^{regex_pattern}$"))
         })
@@ -257,6 +506,13 @@ pub fn search_code(
     for entry in WalkDir::new(&search_root)
         .follow_links(true)
         .into_iter()
+        .filter_entry(|e| {
+            if e.file_type().is_dir() {
+                let name = e.file_name().to_string_lossy();
+                return !SEARCH_SKIP_DIRS.contains(&name.as_ref());
+            }
+            true
+        })
         .filter_map(Result::ok)
     {
         if results.len() >= max_results {
@@ -268,7 +524,6 @@ pub fn search_code(
             continue;
         }
 
-        // Check file pattern filter
         if let Some(ref fp_regex) = file_pattern_regex {
             let file_name = entry_path
                 .file_name()
@@ -279,45 +534,57 @@ pub fn search_code(
             }
         }
 
-        // Skip binary files (simple heuristic)
-        let extension = entry_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        let text_extensions = [
-            "rs", "ts", "js", "py", "go", "java", "c", "cpp", "h", "hpp", "md", "txt", "json",
-            "yaml", "yml", "toml", "xml", "html", "css", "sql", "sh", "bat", "ps1",
-        ];
-        if !text_extensions.contains(&extension) && !extension.is_empty() {
+        if !is_text_file(entry_path) {
             continue;
         }
 
-        // Read and search file
         if let Ok(file_content) = fs::read_to_string(entry_path) {
-            for (line_num, line) in file_content.lines().enumerate() {
+            let lines: Vec<&str> = file_content.lines().collect();
+            let relative_path = entry_path
+                .strip_prefix(&search_root)
+                .unwrap_or(entry_path)
+                .to_string_lossy();
+
+            for (line_idx, line) in lines.iter().enumerate() {
                 if results.len() >= max_results {
                     break;
                 }
-
                 if regex.is_match(line) {
-                    let relative_path = entry_path
-                        .strip_prefix(&search_root)
-                        .unwrap_or(entry_path)
-                        .to_string_lossy();
-                    results.push(format!("{}:{}:{}", relative_path, line_num + 1, line));
+                    if context_lines == 0 {
+                        results.push(format!("{relative_path}:{}:{line}", line_idx + 1));
+                    } else {
+                        results.push(format_match_with_context(
+                            &relative_path,
+                            &lines,
+                            line_idx,
+                            context_lines,
+                        ));
+                    }
                 }
             }
         }
     }
 
-    let output = if results.is_empty() {
-        "No matches found".to_string()
-    } else {
-        results.join("\n")
-    };
+    if results.is_empty() {
+        let msg = zero_match_diagnostic(sandbox, path, pattern);
+        return Ok(
+            ToolResult::success("search_code", msg).with_metadata("match_count", "0".to_string())
+        );
+    }
 
+    let output = results.join("\n");
     Ok(ToolResult::success("search_code", output)
         .with_metadata("match_count", results.len().to_string()))
+}
+
+/// Heuristic check for text files based on extension.
+fn is_text_file(path: &std::path::Path) -> bool {
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let text_extensions = [
+        "rs", "ts", "js", "py", "go", "java", "c", "cpp", "h", "hpp", "md", "txt", "json", "yaml",
+        "yml", "toml", "xml", "html", "css", "sql", "sh", "bat", "ps1",
+    ];
+    text_extensions.contains(&extension) || extension.is_empty()
 }
 
 /// Delete a file within the sandbox.
@@ -543,11 +810,40 @@ pub fn cmd_run(
     output_to_tool_result(output)
 }
 
+/// Truncation limits for command output.
+const STDOUT_TRUNCATE_LIMIT: usize = 8_000;
+/// Truncation limit for stderr.
+const STDERR_TRUNCATE_LIMIT: usize = 4_000;
+
+/// Truncate a string to at most `limit` bytes on a char boundary.
+fn truncate_output(s: &str, limit: usize) -> String {
+    if s.len() <= limit {
+        return s.to_string();
+    }
+    // Walk backward to find a char boundary
+    let mut end = limit;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n... (truncated, {limit} char limit)", &s[..end])
+}
+
 /// Convert process output to a tool result.
+///
+/// Returns a *successful* `ToolResult` in all cases (never `Err`) so that
+/// downstream command-failure tracking can rely on `ToolResult::ok == false`
+/// (`is_error`) rather than on a Rust `Err` variant.
+///
+/// Stdout is capped at 8 000 chars, stderr at 4 000 chars.
 #[allow(clippy::needless_pass_by_value)]
 pub fn output_to_tool_result(output: std::process::Output) -> Result<ToolResult, ToolError> {
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let raw_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let raw_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    let stdout = truncate_output(&raw_stdout, STDOUT_TRUNCATE_LIMIT);
+    let stderr = truncate_output(&raw_stderr, STDERR_TRUNCATE_LIMIT);
+
+    let exit_code = output.status.code().unwrap_or(-1);
 
     if output.status.success() {
         let mut result = ToolResult::success("cmd_run", stdout);
@@ -557,15 +853,11 @@ pub fn output_to_tool_result(output: std::process::Output) -> Result<ToolResult,
         result = result.with_metadata("exit_code", "0".to_string());
         Ok(result)
     } else {
-        let exit_code = output.status.code().unwrap_or(-1);
-        let combined = if stderr.is_empty() {
-            stdout
-        } else {
-            format!("{stdout}\n{stderr}")
-        };
-        Err(ToolError::CommandFailed(format!(
-            "Command exited with code {exit_code}: {combined}"
-        )))
+        let structured = format!("exit_code: {exit_code}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        let mut result = ToolResult::failure("cmd_run", structured);
+        result.exit_code = Some(exit_code);
+        result = result.with_metadata("exit_code", exit_code.to_string());
+        Ok(result)
     }
 }
 
@@ -715,10 +1007,7 @@ impl Tool for FsLsTool {
         ctx: &ToolContext,
         args: serde_json::Value,
     ) -> Result<ToolResult, ToolError> {
-        let path = args["path"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("missing 'path' argument".into()))?
-            .to_string();
+        let path = args["path"].as_str().unwrap_or(".").to_string();
         let sandbox = ctx.sandbox.clone();
         spawn_blocking_tool(move || fs_ls(&sandbox, &path)).await
     }
@@ -857,7 +1146,7 @@ impl Tool for FsWriteTool {
                     },
                     "create_dirs": {
                         "type": "boolean",
-                        "description": "Create parent directories if they don't exist (default: false)"
+                        "description": "Create parent directories if they don't exist (default: true)"
                     }
                 },
                 "required": ["path", "content"]
@@ -878,7 +1167,7 @@ impl Tool for FsWriteTool {
             .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("missing 'content' argument".into()))?
             .to_string();
-        let create_dirs = args["create_dirs"].as_bool().unwrap_or(false);
+        let create_dirs = args["create_dirs"].as_bool().unwrap_or(true);
         let sandbox = ctx.sandbox.clone();
         spawn_blocking_tool(move || fs_write(&sandbox, &path, &content, create_dirs)).await
     }
@@ -981,6 +1270,10 @@ impl Tool for SearchCodeTool {
                     "max_results": {
                         "type": "integer",
                         "description": "Maximum number of results to return (default: 100)"
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Number of surrounding lines to show (0-10, default: 0)"
                     }
                 },
                 "required": ["pattern"]
@@ -1005,6 +1298,9 @@ impl Tool for SearchCodeTool {
         let max_results = args["max_results"]
             .as_u64()
             .map_or(100, |n| usize::try_from(n).unwrap_or(100));
+        let context_lines = args["context_lines"]
+            .as_u64()
+            .map_or(0, |n| usize::try_from(n).unwrap_or(0));
         let sandbox = ctx.sandbox.clone();
         spawn_blocking_tool(move || {
             search_code(
@@ -1013,6 +1309,7 @@ impl Tool for SearchCodeTool {
                 path.as_deref(),
                 file_pattern.as_deref(),
                 max_results,
+                context_lines,
             )
         })
         .await
@@ -1255,7 +1552,6 @@ mod tests {
     fn test_fs_ls() {
         let (sandbox, dir) = create_test_sandbox();
 
-        // Create some files and dirs
         fs::write(dir.path().join("file1.txt"), "hello").unwrap();
         fs::write(dir.path().join("file2.txt"), "world").unwrap();
         fs::create_dir(dir.path().join("subdir")).unwrap();
@@ -1274,7 +1570,6 @@ mod tests {
 
         let result = fs_ls(&sandbox, ".").unwrap();
         assert!(result.ok);
-        // Empty directory should produce empty or whitespace-only output
         let output = String::from_utf8_lossy(&result.stdout);
         assert!(output.trim().is_empty());
     }
@@ -1300,6 +1595,48 @@ mod tests {
 
         let result = fs_ls(&sandbox, "file.txt");
         assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[test]
+    fn test_fs_ls_noise_dirs_filtered() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        fs::create_dir(dir.path().join("node_modules")).unwrap();
+        fs::create_dir(dir.path().join("target")).unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::create_dir(dir.path().join("__pycache__")).unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+
+        let result = fs_ls(&sandbox, ".").unwrap();
+        let output = String::from_utf8_lossy(&result.stdout);
+        assert!(!output.contains("node_modules"));
+        assert!(!output.contains("target"));
+        assert!(!output.contains(".git"));
+        assert!(!output.contains("__pycache__"));
+        assert!(output.contains("src"));
+        assert!(output.contains("main.rs"));
+    }
+
+    #[test]
+    fn test_fs_ls_dirs_first_sorting() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        fs::write(dir.path().join("aaa_file.txt"), "").unwrap();
+        fs::create_dir(dir.path().join("zzz_dir")).unwrap();
+        fs::create_dir(dir.path().join("aaa_dir")).unwrap();
+        fs::write(dir.path().join("zzz_file.txt"), "").unwrap();
+
+        let result = fs_ls(&sandbox, ".").unwrap();
+        let output = String::from_utf8_lossy(&result.stdout);
+        let lines: Vec<&str> = output.lines().collect();
+
+        // Dirs should come first, sorted alphabetically
+        assert!(lines[0].contains("aaa_dir"));
+        assert!(lines[1].contains("zzz_dir"));
+        // Then files, sorted alphabetically
+        assert!(lines[2].contains("aaa_file.txt"));
+        assert!(lines[3].contains("zzz_file.txt"));
     }
 
     // ========================================================================
@@ -1487,11 +1824,42 @@ mod tests {
     }
 
     #[test]
-    fn test_fs_write_no_create_dirs() {
+    fn test_fs_write_creates_parent_dirs_by_default() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        // Even with create_dirs=false, parent dirs are now always created
+        let result = fs_write(&sandbox, "auto/created/file.txt", "content", false).unwrap();
+        assert!(result.ok);
+        assert!(dir.path().join("auto/created/file.txt").exists());
+    }
+
+    #[test]
+    fn test_fs_write_truncation_heuristic_rejects_small() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        // Write a large file first
+        let large = "x".repeat(1000);
+        fs::write(dir.path().join("big.txt"), &large).unwrap();
+
+        // Attempt to overwrite with tiny content (< 10%)
+        let result = fs_write(&sandbox, "big.txt", "tiny", false);
+        assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+        if let Err(ToolError::InvalidArguments(msg)) = result {
+            assert!(msg.contains("10%"));
+        }
+    }
+
+    #[test]
+    fn test_fs_write_post_write_verification() {
         let (sandbox, _dir) = create_test_sandbox();
 
-        let result = fs_write(&sandbox, "nonexistent/file.txt", "content", false);
-        assert!(matches!(result, Err(ToolError::PathNotFound(_))));
+        let content = "verified content";
+        let result = fs_write(&sandbox, "verify.txt", content, false).unwrap();
+        assert!(result.ok);
+        assert_eq!(
+            result.metadata.get("bytes_written").unwrap(),
+            &content.len().to_string()
+        );
     }
 
     #[test]
@@ -1549,17 +1917,17 @@ mod tests {
     }
 
     #[test]
-    fn test_fs_edit_first_only_default() {
+    fn test_fs_edit_multi_match_without_replace_all_errors() {
         let (sandbox, dir) = create_test_sandbox();
 
         fs::write(dir.path().join("edit.txt"), "foo bar foo baz foo").unwrap();
 
-        let result = fs_edit(&sandbox, "edit.txt", "foo", "qux", false).unwrap();
-        assert!(result.ok);
-        assert_eq!(result.metadata.get("replacements").unwrap(), "1");
-
-        let content = fs::read_to_string(dir.path().join("edit.txt")).unwrap();
-        assert_eq!(content, "qux bar foo baz foo");
+        let result = fs_edit(&sandbox, "edit.txt", "foo", "qux", false);
+        assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+        if let Err(ToolError::InvalidArguments(msg)) = result {
+            assert!(msg.contains("3 occurrences"));
+            assert!(msg.contains("replace_all=true"));
+        }
     }
 
     #[test]
@@ -1594,6 +1962,89 @@ mod tests {
 
         let updated = fs::read_to_string(dir.path().join("multi.txt")).unwrap();
         assert_eq!(updated, "line1\nnew_content\nline3");
+    }
+
+    #[test]
+    fn test_fs_edit_fuzzy_match_whitespace_difference() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        // File has extra leading whitespace
+        let content = "fn main() {\n    let x = 1;\n    let y = 2;\n}\n";
+        fs::write(dir.path().join("fuzzy.rs"), content).unwrap();
+
+        // old_text has different indentation (trimmed)
+        let old_text = "let x = 1;\nlet y = 2;";
+        let new_text = "let x = 10;\nlet y = 20;";
+
+        let result = fs_edit(&sandbox, "fuzzy.rs", old_text, new_text, false).unwrap();
+        assert!(result.ok);
+
+        let updated = fs::read_to_string(dir.path().join("fuzzy.rs")).unwrap();
+        assert!(updated.contains("let x = 10;"));
+        assert!(updated.contains("let y = 20;"));
+    }
+
+    #[test]
+    fn test_fs_edit_fuzzy_match_no_match() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        fs::write(dir.path().join("nope.txt"), "alpha\nbeta\ngamma\n").unwrap();
+
+        let result = fs_edit(&sandbox, "nope.txt", "totally\ndifferent", "new", false);
+        assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+        if let Err(ToolError::InvalidArguments(msg)) = result {
+            assert!(msg.contains("not found"));
+        }
+    }
+
+    #[test]
+    fn test_fs_edit_shrinkage_guard_rejects_large_reduction() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        let big_content = "a\n".repeat(500);
+        fs::write(dir.path().join("shrink.txt"), &big_content).unwrap();
+
+        // Replace the entire content with something tiny
+        let result = fs_edit(&sandbox, "shrink.txt", &big_content, "x", false);
+        assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+        if let Err(ToolError::InvalidArguments(msg)) = result {
+            assert!(msg.contains("20%"));
+        }
+    }
+
+    #[test]
+    fn test_fs_edit_shrinkage_guard_allows_normal_edit() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        let content = "Hello, World! This is a test file with enough content.";
+        fs::write(dir.path().join("normal.txt"), content).unwrap();
+
+        let result = fs_edit(&sandbox, "normal.txt", "World", "Aura", false).unwrap();
+        assert!(result.ok);
+
+        let updated = fs::read_to_string(dir.path().join("normal.txt")).unwrap();
+        assert_eq!(
+            updated,
+            "Hello, Aura! This is a test file with enough content."
+        );
+    }
+
+    #[test]
+    fn test_fs_edit_crlf_normalization() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        // Write a CRLF file
+        let crlf_content = "line1\r\nline2\r\nline3\r\n";
+        fs::write(dir.path().join("crlf.txt"), crlf_content).unwrap();
+
+        let result = fs_edit(&sandbox, "crlf.txt", "line2", "replaced", false).unwrap();
+        assert!(result.ok);
+
+        let updated = fs::read_to_string(dir.path().join("crlf.txt")).unwrap();
+        // Output should still be CRLF
+        assert!(updated.contains("\r\n"));
+        assert!(updated.contains("replaced"));
+        assert!(!updated.contains("line2"));
     }
 
     // ========================================================================
@@ -1698,7 +2149,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = search_code(&sandbox, "fn main", None, None, 100).unwrap();
+        let result = search_code(&sandbox, "fn main", None, None, 100, 0).unwrap();
         assert!(result.ok);
         let output = String::from_utf8_lossy(&result.stdout);
         assert!(output.contains("fn main"));
@@ -1711,7 +2162,7 @@ mod tests {
 
         fs::write(dir.path().join("code.rs"), "let x = 42;\nlet y = 123;").unwrap();
 
-        let result = search_code(&sandbox, r"let \w+ = \d+", None, None, 100).unwrap();
+        let result = search_code(&sandbox, r"let \w+ = \d+", None, None, 100, 0).unwrap();
         assert!(result.ok);
         assert_eq!(result.metadata.get("match_count").unwrap(), "2");
     }
@@ -1722,7 +2173,7 @@ mod tests {
 
         fs::write(dir.path().join("code.rs"), "fn main() {}").unwrap();
 
-        let result = search_code(&sandbox, "nonexistent_pattern_xyz", None, None, 100).unwrap();
+        let result = search_code(&sandbox, "nonexistent_pattern_xyz", None, None, 100, 0).unwrap();
         assert!(result.ok);
         let output = String::from_utf8_lossy(&result.stdout);
         assert!(output.contains("No matches found"));
@@ -1735,7 +2186,7 @@ mod tests {
         fs::write(dir.path().join("code.rs"), "let rust_var = 1;").unwrap();
         fs::write(dir.path().join("code.ts"), "let ts_var = 2;").unwrap();
 
-        let result = search_code(&sandbox, "let", None, Some("*.rs"), 100).unwrap();
+        let result = search_code(&sandbox, "let", None, Some("*.rs"), 100, 0).unwrap();
         assert!(result.ok);
         let output = String::from_utf8_lossy(&result.stdout);
         assert!(output.contains("rust_var"));
@@ -1752,7 +2203,7 @@ mod tests {
             .join("\n");
         fs::write(dir.path().join("many.txt"), content).unwrap();
 
-        let result = search_code(&sandbox, "line", None, None, 5).unwrap();
+        let result = search_code(&sandbox, "line", None, None, 5, 0).unwrap();
         assert!(result.ok);
         assert_eq!(result.metadata.get("match_count").unwrap(), "5");
     }
@@ -1764,7 +2215,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("src/nested")).unwrap();
         fs::write(dir.path().join("src/nested/code.rs"), "fn nested_fn() {}").unwrap();
 
-        let result = search_code(&sandbox, "nested_fn", Some("src"), None, 100).unwrap();
+        let result = search_code(&sandbox, "nested_fn", Some("src"), None, 100, 0).unwrap();
         assert!(result.ok);
         let output = String::from_utf8_lossy(&result.stdout);
         assert!(output.contains("nested_fn"));
@@ -1774,8 +2225,42 @@ mod tests {
     fn test_search_code_invalid_regex() {
         let (sandbox, _dir) = create_test_sandbox();
 
-        let result = search_code(&sandbox, "[invalid(regex", None, None, 100);
+        let result = search_code(&sandbox, "[invalid(regex", None, None, 100, 0);
         assert!(matches!(result, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[test]
+    fn test_search_code_context_lines() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        let content = "alpha\nbeta\ngamma\ndelta\nepsilon\n";
+        fs::write(dir.path().join("ctx.txt"), content).unwrap();
+
+        let result = search_code(&sandbox, "gamma", None, None, 100, 1).unwrap();
+        assert!(result.ok);
+        let output = String::from_utf8_lossy(&result.stdout);
+        // Context should include surrounding lines
+        assert!(output.contains("beta"));
+        assert!(output.contains("gamma"));
+        assert!(output.contains("delta"));
+        // Match line should be marked with >
+        assert!(output.contains(">"));
+    }
+
+    #[test]
+    fn test_search_code_skip_dirs() {
+        let (sandbox, dir) = create_test_sandbox();
+
+        fs::create_dir_all(dir.path().join("node_modules")).unwrap();
+        fs::write(dir.path().join("node_modules/dep.js"), "let hidden = true;").unwrap();
+        fs::create_dir_all(dir.path().join("target")).unwrap();
+        fs::write(dir.path().join("target/out.rs"), "let hidden = true;").unwrap();
+        fs::write(dir.path().join("visible.rs"), "let visible = true;").unwrap();
+
+        let result = search_code(&sandbox, "let", None, None, 100, 0).unwrap();
+        let output = String::from_utf8_lossy(&result.stdout);
+        assert!(output.contains("visible"));
+        assert!(!output.contains("hidden"));
     }
 
     // ========================================================================
@@ -1799,7 +2284,6 @@ mod tests {
         fs::create_dir(dir.path().join("subdir")).unwrap();
         fs::write(dir.path().join("subdir/marker.txt"), "found").unwrap();
 
-        // On Windows, use 'dir' or 'type'; on Unix, use 'ls' or 'cat'
         #[cfg(windows)]
         let result = cmd_run(&sandbox, "dir", &[], Some("subdir"), 5000).unwrap();
         #[cfg(not(windows))]
@@ -1814,6 +2298,7 @@ mod tests {
     fn test_cmd_run_nonexistent_command() {
         let (sandbox, _dir) = create_test_sandbox();
 
+        // Non-zero exit from a command that doesn't exist is now Ok with is_error
         let result = cmd_run(
             &sandbox,
             "nonexistent_command_that_does_not_exist_xyz",
@@ -1821,14 +2306,19 @@ mod tests {
             None,
             5000,
         );
-        assert!(matches!(result, Err(ToolError::CommandFailed(_))));
+        // On some platforms this is a spawn error (Err), on others the shell
+        // returns non-zero (Ok with !ok). Accept either.
+        match result {
+            Err(ToolError::CommandFailed(_)) => {}
+            Ok(r) => assert!(!r.ok),
+            other => panic!("unexpected result: {other:?}"),
+        }
     }
 
     #[test]
     fn test_cmd_run_exit_code() {
         let (sandbox, _dir) = create_test_sandbox();
 
-        // Run a command that exits with non-zero status
         #[cfg(windows)]
         let result = cmd_run(
             &sandbox,
@@ -1836,11 +2326,65 @@ mod tests {
             &["/c".to_string(), "exit".to_string(), "1".to_string()],
             None,
             5000,
-        );
+        )
+        .unwrap();
         #[cfg(not(windows))]
-        let result = cmd_run(&sandbox, "false", &[], None, 5000);
+        let result = cmd_run(&sandbox, "false", &[], None, 5000).unwrap();
 
-        assert!(matches!(result, Err(ToolError::CommandFailed(_))));
+        // Non-zero exit now returns Ok with is_error=true
+        assert!(!result.ok);
+        assert_eq!(result.exit_code, Some(1));
+    }
+
+    #[test]
+    fn test_cmd_run_failure_returns_structured_result() {
+        let (sandbox, _dir) = create_test_sandbox();
+
+        #[cfg(windows)]
+        let result = cmd_run(
+            &sandbox,
+            "cmd",
+            &["/c".to_string(), "exit".to_string(), "42".to_string()],
+            None,
+            5000,
+        )
+        .unwrap();
+        #[cfg(not(windows))]
+        let result = cmd_run(&sandbox, "sh", &["-c".into(), "exit 42".into()], None, 5000).unwrap();
+
+        assert!(!result.ok);
+        let stderr_text = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr_text.contains("exit_code:"));
+    }
+
+    #[test]
+    fn test_cmd_run_stdout_truncation() {
+        let (sandbox, _dir) = create_test_sandbox();
+
+        // Generate output larger than 8000 chars
+        #[cfg(windows)]
+        let result = cmd_run(
+            &sandbox,
+            "powershell",
+            &["-Command".to_string(), "'x' * 10000".to_string()],
+            None,
+            10000,
+        )
+        .unwrap();
+        #[cfg(not(windows))]
+        let result = cmd_run(
+            &sandbox,
+            "python3",
+            &["-c".into(), "print('x' * 10000)".into()],
+            None,
+            10000,
+        )
+        .unwrap();
+
+        assert!(result.ok);
+        let stdout_text = String::from_utf8_lossy(&result.stdout);
+        // Output should be truncated to ~8000 chars
+        assert!(stdout_text.len() <= STDOUT_TRUNCATE_LIMIT + 100);
     }
 
     #[test]
@@ -1867,17 +2411,10 @@ mod tests {
     fn test_fast_command_returns_output() {
         let (sandbox, _dir) = create_test_sandbox();
 
-        // Run a fast command with generous threshold
-        let (result, _command) = cmd_run_with_threshold(
-            &sandbox,
-            "echo",
-            &["fast_output".to_string()],
-            None,
-            5000, // 5 second threshold - plenty of time
-        )
-        .unwrap();
+        let (result, _command) =
+            cmd_run_with_threshold(&sandbox, "echo", &["fast_output".to_string()], None, 5000)
+                .unwrap();
 
-        // Should complete within threshold
         match result {
             ThresholdResult::Completed(output) => {
                 assert!(output.status.success());
@@ -1894,36 +2431,26 @@ mod tests {
     fn test_slow_command_returns_child() {
         let (sandbox, _dir) = create_test_sandbox();
 
-        // Run a slow command with very short threshold
         #[cfg(windows)]
         let (result, command) = cmd_run_with_threshold(
             &sandbox,
             "ping",
             &["-n".to_string(), "10".to_string(), "127.0.0.1".to_string()],
             None,
-            100, // 100ms threshold - too short for ping
+            100,
         )
         .unwrap();
 
         #[cfg(not(windows))]
-        let (result, command) = cmd_run_with_threshold(
-            &sandbox,
-            "sleep",
-            &["10".to_string()],
-            None,
-            100, // 100ms threshold - too short for sleep
-        )
-        .unwrap();
+        let (result, command) =
+            cmd_run_with_threshold(&sandbox, "sleep", &["10".to_string()], None, 100).unwrap();
 
-        // Should return Pending with child handle
         match result {
             ThresholdResult::Pending(mut child) => {
-                // Verify we have a live child process
                 assert!(
                     child.try_wait().unwrap().is_none(),
                     "Child should still be running"
                 );
-                // Clean up - kill the process
                 let _ = child.kill();
                 let _ = child.wait();
                 assert!(!command.is_empty());
@@ -1938,17 +2465,10 @@ mod tests {
     fn test_threshold_boundary_fast_completes() {
         let (sandbox, _dir) = create_test_sandbox();
 
-        // Command that should complete just under a reasonable threshold
-        let (result, _command) = cmd_run_with_threshold(
-            &sandbox,
-            "echo",
-            &["boundary".to_string()],
-            None,
-            1000, // 1 second should be enough for echo
-        )
-        .unwrap();
+        let (result, _command) =
+            cmd_run_with_threshold(&sandbox, "echo", &["boundary".to_string()], None, 1000)
+                .unwrap();
 
-        // echo is fast, should complete
         match result {
             ThresholdResult::Completed(output) => {
                 assert!(output.status.success());
@@ -1966,20 +2486,16 @@ mod tests {
         let (mut child, command) =
             cmd_spawn(&sandbox, "echo", &["test_arg".to_string()], None).unwrap();
 
-        // Command string should include the program and args
         assert!(command.contains("echo"));
         assert!(command.contains("test_arg"));
 
-        // Clean up
         let _ = child.wait();
     }
 
     #[test]
     fn test_output_to_tool_result_success() {
-        // Create a successful output
         #[cfg(windows)]
         let status = {
-            // On Windows, we need to run an actual command to get a valid ExitStatus
             let output = std::process::Command::new("cmd.exe")
                 .args(["/C", "exit 0"])
                 .output()
@@ -2006,7 +2522,6 @@ mod tests {
 
     #[test]
     fn test_output_to_tool_result_failure() {
-        // Create a failed output
         #[cfg(windows)]
         let status = {
             let output = std::process::Command::new("cmd.exe")
@@ -2028,7 +2543,11 @@ mod tests {
             stderr: b"error message".to_vec(),
         };
 
-        let result = output_to_tool_result(output);
-        assert!(matches!(result, Err(ToolError::CommandFailed(_))));
+        // Now returns Ok with is_error=true instead of Err
+        let result = output_to_tool_result(output).unwrap();
+        assert!(!result.ok);
+        assert_eq!(result.exit_code, Some(1));
+        let stderr_text = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr_text.contains("error message"));
     }
 }

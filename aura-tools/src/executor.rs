@@ -195,7 +195,9 @@ mod tests {
     async fn test_cmd_disabled() {
         let (ctx, _dir) = create_test_context();
 
-        let executor = ToolExecutor::with_defaults();
+        let mut config = ToolConfig::default();
+        config.enable_commands = false;
+        let executor = ToolExecutor::new(config);
         let tool_call = ToolCall::new("cmd_run", serde_json::json!({"program": "ls"}));
         let action = Action::delegate_tool(&tool_call);
 
