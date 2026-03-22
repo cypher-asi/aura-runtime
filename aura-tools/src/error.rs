@@ -110,9 +110,9 @@ mod tests {
 
     #[test]
     fn test_tool_error_tool_disabled() {
-        let err = ToolError::ToolDisabled("cmd_run".to_string());
+        let err = ToolError::ToolDisabled("run_command".to_string());
         assert!(err.to_string().contains("tool disabled"));
-        assert!(err.to_string().contains("cmd_run"));
+        assert!(err.to_string().contains("run_command"));
     }
 
     #[test]

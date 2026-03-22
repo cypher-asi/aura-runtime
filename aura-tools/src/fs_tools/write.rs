@@ -86,7 +86,7 @@ pub fn fs_write(
     let truncated_warning = looks_truncated(content);
 
     let mut result =
-        ToolResult::success("fs_write", format!("Wrote {bytes_written} bytes to {path}"))
+        ToolResult::success("write_file", format!("Wrote {bytes_written} bytes to {path}"))
             .with_metadata("bytes_written", bytes_written.to_string())
             .with_metadata("file_existed", file_existed.to_string());
 
@@ -106,12 +106,12 @@ pub struct FsWriteTool;
 #[async_trait]
 impl Tool for FsWriteTool {
     fn name(&self) -> &str {
-        "fs_write"
+        "write_file"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "fs_write".into(),
+            name: "write_file".into(),
             description:
                 "Write content to a file. Creates the file if it doesn't exist, overwrites if it does."
                     .into(),

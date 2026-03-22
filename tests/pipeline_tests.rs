@@ -352,7 +352,7 @@ async fn test_pipeline_with_tool_use() {
         MockProvider::new()
             .with_response(MockResponse::tool_use(
                 "t1",
-                "fs_read",
+                "read_file",
                 serde_json::json!({"path": "test.txt"}),
             ))
             .with_response(MockResponse::text("Read complete.")),
@@ -382,7 +382,7 @@ async fn test_pipeline_with_tool_use() {
     let executor = KernelToolExecutor::new(router, agent_id, ws_path);
 
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
     )];

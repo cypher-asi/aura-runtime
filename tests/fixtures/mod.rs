@@ -192,7 +192,7 @@ pub fn fs_read_call(path: &str) -> ToolCall {
 /// Create a filesystem write tool call.
 pub fn fs_write_call(path: &str, content: &str) -> ToolCall {
     ToolCall::new(
-        "fs_write",
+        "write_file",
         serde_json::json!({
             "path": path,
             "content": content
@@ -203,7 +203,7 @@ pub fn fs_write_call(path: &str, content: &str) -> ToolCall {
 /// Create a filesystem edit tool call.
 pub fn fs_edit_call(path: &str, old_text: &str, new_text: &str) -> ToolCall {
     ToolCall::new(
-        "fs_edit",
+        "edit_file",
         serde_json::json!({
             "path": path,
             "old_text": old_text,
@@ -225,7 +225,7 @@ pub fn search_code_call(pattern: &str) -> ToolCall {
 /// Create a command run tool call.
 pub fn cmd_run_call(program: &str, args: &[&str]) -> ToolCall {
     ToolCall::new(
-        "cmd_run",
+        "run_command",
         serde_json::json!({
             "program": program,
             "args": args

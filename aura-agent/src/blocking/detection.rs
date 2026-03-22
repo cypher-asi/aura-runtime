@@ -165,7 +165,7 @@ fn detect_blocked_writes(tool: &ToolCallInfo, ctx: &BlockingContext) -> Option<B
     let path = extract_path(tool)?;
     if ctx.written_paths.contains(&path) {
         Some(BlockCheckResult::blocked(format!(
-            "You already wrote to `{path}` in this turn. Use `fs_edit` to make targeted changes \
+            "You already wrote to `{path}` in this turn. Use `edit_file` to make targeted changes \
              instead of rewriting the entire file. If you need to rewrite, read the file first \
              to verify your changes."
         )))
@@ -234,7 +234,7 @@ fn detect_blocked_reads(
     tool: &ToolCallInfo,
     read_guard: &ReadGuardState,
 ) -> Option<BlockCheckResult> {
-    let is_read = tool.name == "fs_read" || tool.name == "read_file";
+    let is_read = tool.name == "read_file";
     if !is_read {
         return None;
     }
@@ -290,7 +290,7 @@ fn detect_shell_read_workaround(tool: &ToolCallInfo) -> Option<BlockCheckResult>
     if is_shell_read_cmd(command) {
         Some(BlockCheckResult::blocked(
             "Using shell commands to read files is not allowed. \
-             Use `fs_read` or `read_file` instead.",
+             Use `read_file` instead.",
         ))
     } else {
         Some(BlockCheckResult::allowed())
@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn test_detect_blocked_writes_allows_first_write() {
         let ctx = BlockingContext::new(12);
-        let tool = make_tool("fs_write", serde_json::json!({"path": "test.rs"}));
+        let tool = make_tool("write_file", serde_json::json!({"path": "test.rs"}));
         let result = detect_blocked_writes(&tool, &ctx).unwrap();
         assert!(!result.blocked);
     }
@@ -338,7 +338,7 @@ mod tests {
     fn test_detect_blocked_writes_blocks_second_write() {
         let mut ctx = BlockingContext::new(12);
         ctx.written_paths.insert("test.rs".to_string());
-        let tool = make_tool("fs_write", serde_json::json!({"path": "test.rs"}));
+        let tool = make_tool("write_file", serde_json::json!({"path": "test.rs"}));
         let result = detect_blocked_writes(&tool, &ctx).unwrap();
         assert!(result.blocked);
         assert!(result.recovery_message.unwrap().contains("already wrote"));
@@ -348,7 +348,7 @@ mod tests {
     fn test_detect_blocked_write_failures_at_threshold() {
         let mut ctx = BlockingContext::new(12);
         ctx.write_failures.insert("test.rs".to_string(), 3);
-        let tool = make_tool("fs_write", serde_json::json!({"path": "test.rs"}));
+        let tool = make_tool("write_file", serde_json::json!({"path": "test.rs"}));
         let result = detect_blocked_write_failures(&tool, &ctx).unwrap();
         assert!(result.blocked);
     }
@@ -357,7 +357,7 @@ mod tests {
     fn test_detect_blocked_commands_under_threshold() {
         let mut ctx = BlockingContext::new(12);
         ctx.consecutive_cmd_failures = 4;
-        let tool = make_tool("cmd_run", serde_json::json!({"command": "cargo build"}));
+        let tool = make_tool("run_command", serde_json::json!({"command": "cargo build"}));
         let result = detect_blocked_commands(&tool, &ctx).unwrap();
         assert!(!result.blocked);
     }
@@ -366,7 +366,7 @@ mod tests {
     fn test_detect_blocked_commands_at_threshold() {
         let mut ctx = BlockingContext::new(12);
         ctx.consecutive_cmd_failures = 5;
-        let tool = make_tool("cmd_run", serde_json::json!({"command": "cargo build"}));
+        let tool = make_tool("run_command", serde_json::json!({"command": "cargo build"}));
         let result = detect_blocked_commands(&tool, &ctx).unwrap();
         assert!(result.blocked);
     }
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn test_detect_blocked_exploration_allows_under() {
         let ctx = BlockingContext::new(12);
-        let tool = make_tool("fs_read", serde_json::json!({"path": "test.rs"}));
+        let tool = make_tool("read_file", serde_json::json!({"path": "test.rs"}));
         let result = detect_blocked_exploration(&tool, &ctx).unwrap();
         assert!(!result.blocked);
     }
@@ -383,7 +383,7 @@ mod tests {
     fn test_detect_blocked_exploration_when_exceeded() {
         let mut ctx = BlockingContext::new(12);
         ctx.exploration_count = 12;
-        let tool = make_tool("fs_read", serde_json::json!({"path": "test.rs"}));
+        let tool = make_tool("read_file", serde_json::json!({"path": "test.rs"}));
         let result = detect_blocked_exploration(&tool, &ctx).unwrap();
         assert!(result.blocked);
     }
@@ -417,7 +417,7 @@ mod tests {
     fn test_detect_all_blocked_combines_all_detectors() {
         let ctx = BlockingContext::new(12);
         let read_guard = ReadGuardState::default();
-        let tool = make_tool("fs_write", serde_json::json!({"path": "new.rs"}));
+        let tool = make_tool("write_file", serde_json::json!({"path": "new.rs"}));
         let result = detect_all_blocked(&tool, &ctx, &read_guard);
         assert!(!result.blocked);
     }

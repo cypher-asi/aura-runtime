@@ -139,7 +139,7 @@ async fn test_stall_terminates_loop() {
 
     let provider = MockProvider::new().with_default_response(MockResponse::tool_use(
         "tool_w",
-        "fs_write",
+        "write_file",
         serde_json::json!({"path": "stuck.rs", "content": "bad code"}),
     ));
 
@@ -152,7 +152,7 @@ async fn test_stall_terminates_loop() {
     let agent = AgentLoop::new(config);
     let messages = vec![Message::user("write stuck.rs")];
     let tools = vec![ToolDefinition::new(
-        "fs_write",
+        "write_file",
         "Write a file",
         serde_json::json!({"type": "object"}),
     )];
@@ -203,7 +203,7 @@ async fn test_exploration_compact_at_two_thirds() {
     for i in 0..8 {
         provider_builder = provider_builder.with_response(MockResponse::tool_use(
             format!("t{i}"),
-            "fs_read",
+            "read_file",
             serde_json::json!({"path": format!("file{i}.txt")}),
         ));
     }
@@ -219,7 +219,7 @@ async fn test_exploration_compact_at_two_thirds() {
     let agent = AgentLoop::new(config);
     let messages = vec![Message::user("read many files")];
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object"}),
     )];
@@ -260,7 +260,7 @@ async fn test_no_exploration_compact_when_low() {
     for i in 0..3 {
         provider_builder = provider_builder.with_response(MockResponse::tool_use(
             format!("t{i}"),
-            "fs_read",
+            "read_file",
             serde_json::json!({"path": format!("file{i}.txt")}),
         ));
     }
@@ -276,7 +276,7 @@ async fn test_no_exploration_compact_when_low() {
     let agent = AgentLoop::new(config);
     let messages = vec![Message::user("read a few files")];
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object"}),
     )];

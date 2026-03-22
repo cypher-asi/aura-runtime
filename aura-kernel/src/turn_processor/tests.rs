@@ -129,7 +129,7 @@ async fn test_process_step_returns_tool_use() {
 
     let provider = Arc::new(MockProvider::new().with_response(MockResponse::tool_use(
         "tool_1",
-        "fs_ls",
+        "list_files",
         serde_json::json!({ "path": "." }),
     )));
 
@@ -234,12 +234,12 @@ async fn test_multiple_sequential_tool_calls() {
         MockProvider::new()
             .with_response(MockResponse::tool_use(
                 "tool_1",
-                "fs_ls",
+                "list_files",
                 serde_json::json!({ "path": "." }),
             ))
             .with_response(MockResponse::tool_use(
                 "tool_2",
-                "fs_read",
+                "read_file",
                 serde_json::json!({ "path": "file.txt" }),
             ))
             .with_response(MockResponse::text("All done.")),
@@ -271,7 +271,7 @@ async fn test_max_steps_budget_enforcement() {
     let provider = Arc::new(
         MockProvider::new().with_default_response(MockResponse::tool_use(
             "tool_loop",
-            "fs_ls",
+            "list_files",
             serde_json::json!({ "path": "." }),
         )),
     );
@@ -303,7 +303,7 @@ async fn test_cancellation_stops_turn() {
         MockProvider::new()
             .with_default_response(MockResponse::tool_use(
                 "tool_1",
-                "fs_ls",
+                "list_files",
                 serde_json::json!({ "path": "." }),
             ))
             .with_latency(50),

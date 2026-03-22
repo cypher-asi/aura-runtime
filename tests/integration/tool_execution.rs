@@ -89,7 +89,7 @@ async fn test_fs_write_integration() {
     let ctx = create_context(&workspace);
 
     let tool_call = ToolCall::new(
-        "fs_write",
+        "write_file",
         serde_json::json!({
             "path": "new_file.txt",
             "content": "New content here!"
@@ -113,7 +113,7 @@ async fn test_fs_edit_integration() {
     let ctx = create_context(&workspace);
 
     let tool_call = ToolCall::new(
-        "fs_edit",
+        "edit_file",
         serde_json::json!({
             "path": "hello.txt",
             "old_text": "World",
@@ -243,7 +243,7 @@ async fn test_missing_required_argument() {
     let ctx = create_context(&workspace);
 
     // fs_read requires 'path' argument
-    let tool_call = ToolCall::new("fs_read", serde_json::json!({}));
+    let tool_call = ToolCall::new("read_file", serde_json::json!({}));
     let action = Action::delegate_tool(&tool_call).unwrap();
 
     let effect = executor.execute(&ctx, &action).await;
@@ -263,7 +263,7 @@ async fn test_cmd_run_simple() {
 
     // Test a simple echo command
     let tool_call = ToolCall::new(
-        "cmd_run",
+        "run_command",
         serde_json::json!({
             "program": "echo",
             "args": ["hello"]
@@ -286,14 +286,14 @@ async fn test_cmd_run_in_workspace_dir() {
     // List files in the workspace (dir on Windows, ls on Unix)
     #[cfg(windows)]
     let tool_call = ToolCall::new(
-        "cmd_run",
+        "run_command",
         serde_json::json!({
             "program": "dir"
         }),
     );
     #[cfg(not(windows))]
     let tool_call = ToolCall::new(
-        "cmd_run",
+        "run_command",
         serde_json::json!({
             "program": "ls"
         }),

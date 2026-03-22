@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn tool_result_roundtrip() {
         let result =
-            ToolResult::success("fs_read", b"file contents".to_vec()).with_metadata("size", "13");
+            ToolResult::success("read_file", b"file contents".to_vec()).with_metadata("size", "13");
         let json = serde_json::to_string(&result).unwrap();
         let parsed: ToolResult = serde_json::from_str(&json).unwrap();
         assert_eq!(result, parsed);

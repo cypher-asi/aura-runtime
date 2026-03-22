@@ -43,15 +43,15 @@ impl ApprovalRequest {
 /// Format a human-readable description of a tool call.
 fn format_tool_description(tool: &str, args: &serde_json::Value) -> String {
     match tool {
-        "fs_write" => {
+        "write_file" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
             format!("Write to file: {path}")
         }
-        "fs_edit" => {
+        "edit_file" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
             format!("Edit file: {path}")
         }
-        "cmd_run" => {
+        "run_command" => {
             let program = args.get("program").and_then(|v| v.as_str()).unwrap_or("?");
             let cmd_args = args
                 .get("args")
@@ -144,12 +144,12 @@ mod tests {
     #[test]
     fn test_approval_request() {
         let tool_call = ToolCall::new(
-            "fs_write",
+            "write_file",
             serde_json::json!({ "path": "test.txt", "content": "hello" }),
         );
         let request = ApprovalRequest::new("req-1", &tool_call, PermissionLevel::AskOnce);
 
-        assert_eq!(request.tool, "fs_write");
+        assert_eq!(request.tool, "write_file");
         assert!(request.description.contains("test.txt"));
     }
 
@@ -158,7 +158,7 @@ mod tests {
         let mut queue = ApprovalQueue::new();
         assert!(queue.is_empty());
 
-        let tool_call = ToolCall::new("fs_write", serde_json::json!({}));
+        let tool_call = ToolCall::new("write_file", serde_json::json!({}));
         queue.push(ApprovalRequest::new(
             "1",
             &tool_call,
@@ -177,9 +177,9 @@ mod tests {
     #[test]
     fn test_approval_queue_fifo_order() {
         let mut queue = ApprovalQueue::new();
-        let tc1 = ToolCall::new("fs_write", serde_json::json!({"path": "a.txt"}));
-        let tc2 = ToolCall::new("fs_edit", serde_json::json!({"path": "b.txt"}));
-        let tc3 = ToolCall::new("cmd_run", serde_json::json!({"program": "ls"}));
+        let tc1 = ToolCall::new("write_file", serde_json::json!({"path": "a.txt"}));
+        let tc2 = ToolCall::new("edit_file", serde_json::json!({"path": "b.txt"}));
+        let tc3 = ToolCall::new("run_command", serde_json::json!({"program": "ls"}));
 
         queue.push(ApprovalRequest::new("1", &tc1, PermissionLevel::AskOnce));
         queue.push(ApprovalRequest::new("2", &tc2, PermissionLevel::AlwaysAsk));
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn test_approval_queue_peek_does_not_remove() {
         let mut queue = ApprovalQueue::new();
-        let tc = ToolCall::new("fs_write", serde_json::json!({}));
+        let tc = ToolCall::new("write_file", serde_json::json!({}));
         queue.push(ApprovalRequest::new("1", &tc, PermissionLevel::AskOnce));
 
         assert_eq!(queue.peek().unwrap().id, "1");
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_approval_queue_clear() {
         let mut queue = ApprovalQueue::new();
-        let tc = ToolCall::new("fs_write", serde_json::json!({}));
+        let tc = ToolCall::new("write_file", serde_json::json!({}));
         queue.push(ApprovalRequest::new("1", &tc, PermissionLevel::AskOnce));
         queue.push(ApprovalRequest::new("2", &tc, PermissionLevel::AskOnce));
         assert_eq!(queue.len(), 2);
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn test_approval_request_fs_edit_description() {
         let tc = ToolCall::new(
-            "fs_edit",
+            "edit_file",
             serde_json::json!({"path": "src/main.rs", "old_text": "a", "new_text": "b"}),
         );
         let req = ApprovalRequest::new("1", &tc, PermissionLevel::AlwaysAsk);
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn test_approval_request_cmd_run_description() {
         let tc = ToolCall::new(
-            "cmd_run",
+            "run_command",
             serde_json::json!({"program": "cargo", "args": ["test", "--workspace"]}),
         );
         let req = ApprovalRequest::new("1", &tc, PermissionLevel::AskOnce);

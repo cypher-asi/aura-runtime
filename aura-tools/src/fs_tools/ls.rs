@@ -58,7 +58,7 @@ pub fn fs_ls(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError> {
     }
 
     let output = entries.join("\n");
-    Ok(ToolResult::success("fs_ls", output))
+    Ok(ToolResult::success("list_files", output))
 }
 
 /// `fs_ls` tool: list directory contents.
@@ -67,12 +67,12 @@ pub struct FsLsTool;
 #[async_trait]
 impl Tool for FsLsTool {
     fn name(&self) -> &str {
-        "fs_ls"
+        "list_files"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "fs_ls".into(),
+            name: "list_files".into(),
             description:
                 "List directory contents. Returns files and directories with their types and sizes."
                     .into(),

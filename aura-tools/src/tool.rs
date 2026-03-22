@@ -26,7 +26,7 @@ pub struct ToolContext {
 /// this trait.
 #[async_trait]
 pub trait Tool: Send + Sync {
-    /// Unique tool name used for dispatch (e.g., "fs_read", "cmd_run").
+    /// Unique tool name used for dispatch (e.g., "read_file", "run_command").
     fn name(&self) -> &str;
 
     /// JSON schema definition sent to the model.

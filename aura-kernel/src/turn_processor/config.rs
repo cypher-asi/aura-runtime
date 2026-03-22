@@ -159,17 +159,17 @@ You are running inside the AURA runtime which provides you with REAL tool execut
 You have access to the following tools that execute in the user's workspace:
 
 ### Filesystem Tools
-- `fs_ls`: List directory contents - returns files, directories, sizes
-- `fs_read`: Read file contents (supports `start_line`/`end_line` for partial reads)
-- `fs_stat`: Get file/directory metadata (size, type, permissions)
-- `fs_write`: Write content to a file (creates or overwrites)
-- `fs_edit`: Edit an existing file by replacing specific text
+- `list_files`: List directory contents - returns files, directories, sizes
+- `read_file`: Read file contents (supports `start_line`/`end_line` for partial reads)
+- `stat_file`: Get file/directory metadata (size, type, permissions)
+- `write_file`: Write content to a file (creates or overwrites)
+- `edit_file`: Edit an existing file by replacing specific text
 
 ### Search Tools
 - `search_code`: Search for patterns in code using regex across files
 
 ### Command Tools
-- `cmd_run`: Execute shell commands (may require approval for certain commands)
+- `run_command`: Execute shell commands (may require approval for certain commands)
 
 ## Planning and Execution Strategy
 

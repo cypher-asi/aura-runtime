@@ -26,17 +26,18 @@ pub fn push_or_replace_warning(messages: &mut Vec<Message>, warning: &str) {
     messages.push(Message::user(warning));
 }
 
-/// Normalize aura-app tool names to aura-harness names.
-#[must_use]
-pub fn normalize_tool_name(name: &str) -> &str {
-    match name {
-        "read_file" => "fs_read",
-        "write_file" => "fs_write",
-        "edit_file" => "fs_edit",
-        "delete_file" => "fs_delete",
-        "list_files" => "fs_ls",
-        "find_files" => "fs_find",
-        _ => name,
+/// Strip property descriptions from tool definitions to reduce token usage.
+pub fn compact_tools(tools: &mut [aura_reasoner::ToolDefinition]) {
+    for tool in tools {
+        if let Some(props) = tool.input_schema.get_mut("properties") {
+            if let Some(obj) = props.as_object_mut() {
+                for (_, prop_schema) in obj.iter_mut() {
+                    if let Some(inner) = prop_schema.as_object_mut() {
+                        inner.remove("description");
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -54,8 +55,8 @@ pub fn is_exploration_tool(name: &str) -> bool {
 
 /// Summarize write tool inputs to save context tokens.
 ///
-/// For `write_file`/`fs_write`: replaces content with path + byte size.
-/// For `edit_file`/`fs_edit`: replaces `old_text`/`new_text` with path + edit description.
+/// For write_file: replaces content with path + byte size.
+/// For edit_file: replaces old_text/new_text with path + edit description.
 /// For other tools: returns `None` (input unchanged).
 #[must_use]
 pub fn summarize_write_input(
@@ -63,7 +64,7 @@ pub fn summarize_write_input(
     input: &serde_json::Value,
 ) -> Option<serde_json::Value> {
     match tool_name {
-        "fs_write" | "write_file" => {
+        "write_file" => {
             let path = input
                 .get("path")
                 .and_then(|v| v.as_str())
@@ -71,27 +72,30 @@ pub fn summarize_write_input(
             let content_len = input
                 .get("content")
                 .and_then(|v| v.as_str())
-                .map_or(0, str::len);
+                .map(|s| s.len())
+                .unwrap_or(0);
             Some(serde_json::json!({
                 "path": path,
                 "_summarized": format!("Content: {} bytes written", content_len)
             }))
         }
-        "fs_edit" | "edit_file" => {
+        "edit_file" => {
             let path = input
                 .get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
             let old_len = input
                 .get("old_text")
-                .or_else(|| input.get("old_string"))
+                .or(input.get("old_string"))
                 .and_then(|v| v.as_str())
-                .map_or(0, str::len);
+                .map(|s| s.len())
+                .unwrap_or(0);
             let new_len = input
                 .get("new_text")
-                .or_else(|| input.get("new_string"))
+                .or(input.get("new_string"))
                 .and_then(|v| v.as_str())
-                .map_or(0, str::len);
+                .map(|s| s.len())
+                .unwrap_or(0);
             Some(serde_json::json!({
                 "path": path,
                 "_summarized": format!("Edit: replaced {} chars with {} chars", old_len, new_len)
@@ -106,20 +110,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_normalize_tool_name_mapping() {
-        assert_eq!(normalize_tool_name("read_file"), "fs_read");
-        assert_eq!(normalize_tool_name("write_file"), "fs_write");
-        assert_eq!(normalize_tool_name("edit_file"), "fs_edit");
-        assert_eq!(normalize_tool_name("delete_file"), "fs_delete");
-        assert_eq!(normalize_tool_name("list_files"), "fs_ls");
-        assert_eq!(normalize_tool_name("find_files"), "fs_find");
-    }
-
-    #[test]
-    fn test_normalize_tool_name_passthrough() {
-        assert_eq!(normalize_tool_name("search_code"), "search_code");
-        assert_eq!(normalize_tool_name("cmd_run"), "cmd_run");
-        assert_eq!(normalize_tool_name("unknown_tool"), "unknown_tool");
+    fn test_compact_tools_strips_descriptions() {
+        let mut tools = vec![aura_reasoner::ToolDefinition::new(
+            "test",
+            "A tool",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "The file path"
+                    }
+                }
+            }),
+        )];
+        compact_tools(&mut tools);
+        let props = tools[0].input_schema["properties"]["path"]
+            .as_object()
+            .unwrap();
+        assert!(!props.contains_key("description"));
+        assert!(props.contains_key("type"));
     }
 
     #[test]
@@ -138,17 +148,11 @@ mod tests {
         });
         let result = summarize_write_input("write_file", &input).unwrap();
         assert_eq!(result["path"], "src/main.rs");
-        assert!(result["_summarized"]
-            .as_str()
-            .unwrap()
-            .contains("32 bytes written"));
+        assert!(result["_summarized"].as_str().unwrap().contains("32 bytes written"));
 
-        let result_fs = summarize_write_input("fs_write", &input).unwrap();
-        assert_eq!(result_fs["path"], "src/main.rs");
-        assert!(result_fs["_summarized"]
-            .as_str()
-            .unwrap()
-            .contains("bytes written"));
+        let result2 = summarize_write_input("write_file", &input).unwrap();
+        assert_eq!(result2["path"], "src/main.rs");
+        assert!(result2["_summarized"].as_str().unwrap().contains("bytes written"));
     }
 
     #[test]
@@ -168,15 +172,14 @@ mod tests {
             "old_string": "abc",
             "new_string": "defgh"
         });
-        let result_alt = summarize_write_input("fs_edit", &input_alt).unwrap();
-        let summary_alt = result_alt["_summarized"].as_str().unwrap();
-        assert!(summary_alt.contains("replaced 3 chars with 5 chars"));
+        let result2 = summarize_write_input("edit_file", &input_alt).unwrap();
+        let summary2 = result2["_summarized"].as_str().unwrap();
+        assert!(summary2.contains("replaced 3 chars with 5 chars"));
     }
 
     #[test]
     fn test_summarize_read_file_unchanged() {
         let input = serde_json::json!({"path": "src/main.rs"});
-        assert!(summarize_write_input("fs_read", &input).is_none());
         assert!(summarize_write_input("read_file", &input).is_none());
     }
 
@@ -184,7 +187,7 @@ mod tests {
     fn test_summarize_unknown_tool() {
         let input = serde_json::json!({"query": "some search"});
         assert!(summarize_write_input("search_code", &input).is_none());
-        assert!(summarize_write_input("cmd_run", &input).is_none());
+        assert!(summarize_write_input("run_command", &input).is_none());
         assert!(summarize_write_input("totally_unknown", &input).is_none());
     }
 }

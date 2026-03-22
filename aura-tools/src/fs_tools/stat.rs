@@ -39,7 +39,7 @@ pub fn fs_stat(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError> {
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
 
-    let mut tool_result = ToolResult::success("fs_stat", output.join("\n"));
+    let mut tool_result = ToolResult::success("stat_file", output.join("\n"));
     tool_result.metadata = result_metadata;
     Ok(tool_result)
 }
@@ -50,12 +50,12 @@ pub struct FsStatTool;
 #[async_trait]
 impl Tool for FsStatTool {
     fn name(&self) -> &str {
-        "fs_stat"
+        "stat_file"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "fs_stat".into(),
+            name: "stat_file".into(),
             description: "Get file or directory metadata including size, type, and permissions."
                 .into(),
             input_schema: serde_json::json!({

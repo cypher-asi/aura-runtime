@@ -48,7 +48,7 @@ pub fn fs_read(
 
         if start > total {
             return Ok(ToolResult::success(
-                "fs_read",
+                "read_file",
                 format!("(file has {total} lines, requested start_line={start})"),
             )
             .with_metadata("total_lines", total.to_string()));
@@ -60,13 +60,13 @@ pub fn fs_read(
             .map(|(i, line)| format!("{:>6}|{}", start + i, line))
             .collect();
         let output = sliced.join("\n");
-        Ok(ToolResult::success("fs_read", output)
+        Ok(ToolResult::success("read_file", output)
             .with_metadata("size", size.to_string())
             .with_metadata("total_lines", total.to_string())
             .with_metadata("start_line", start.to_string())
             .with_metadata("end_line", end.to_string()))
     } else {
-        Ok(ToolResult::success("fs_read", contents).with_metadata("size", size.to_string()))
+        Ok(ToolResult::success("read_file", contents).with_metadata("size", size.to_string()))
     }
 }
 
@@ -76,12 +76,12 @@ pub struct FsReadTool;
 #[async_trait]
 impl Tool for FsReadTool {
     fn name(&self) -> &str {
-        "fs_read"
+        "read_file"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "fs_read".into(),
+            name: "read_file".into(),
             description: "Read the contents of a file. Supports optional line range to avoid reading entire large files. When start_line/end_line are provided, output is prefixed with line numbers.".into(),
             input_schema: serde_json::json!({
                 "type": "object",

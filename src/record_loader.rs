@@ -160,7 +160,7 @@ pub(crate) fn extract_tool_info(tx: &Transaction) -> String {
     match tx.tx_type {
         TransactionType::ToolProposal => {
             if let Ok(proposal) = serde_json::from_slice::<aura_core::ToolProposal>(&tx.payload) {
-                if proposal.tool == "cmd_run" {
+                if proposal.tool == "run_command" {
                     return extract_cmd_run_command(&proposal.args);
                 }
                 return proposal.tool;
@@ -168,7 +168,7 @@ pub(crate) fn extract_tool_info(tx: &Transaction) -> String {
         }
         TransactionType::ToolExecution => {
             if let Ok(execution) = serde_json::from_slice::<aura_core::ToolExecution>(&tx.payload) {
-                if execution.tool == "cmd_run" {
+                if execution.tool == "run_command" {
                     return extract_cmd_run_command(&execution.args);
                 }
                 return execution.tool;

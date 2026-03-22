@@ -18,7 +18,7 @@ pub fn fs_delete(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError>
     }
 
     fs::remove_file(&resolved)?;
-    Ok(ToolResult::success("fs_delete", format!("Deleted {path}")))
+    Ok(ToolResult::success("delete_file", format!("Deleted {path}")))
 }
 
 /// `fs_delete` tool: delete a file.
@@ -27,12 +27,12 @@ pub struct FsDeleteTool;
 #[async_trait]
 impl Tool for FsDeleteTool {
     fn name(&self) -> &str {
-        "fs_delete"
+        "delete_file"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "fs_delete".into(),
+            name: "delete_file".into(),
             description:
                 "Delete a file within the workspace. Only files can be deleted, not directories."
                     .into(),

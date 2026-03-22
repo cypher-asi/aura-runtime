@@ -3,7 +3,6 @@
 //! Bridges between the `AgentToolExecutor` trait (agent-loop layer) and the
 //! existing executor infrastructure in `aura-executor`.
 
-use crate::helpers::normalize_tool_name;
 use crate::types::{AgentToolExecutor, ToolCallInfo, ToolCallResult};
 use async_trait::async_trait;
 use aura_core::{Action, AgentId, EffectStatus, ToolCall, ToolResult};
@@ -38,8 +37,7 @@ impl AgentToolExecutor for KernelToolExecutor {
         let mut results = Vec::new();
 
         for tool in tool_calls {
-            let normalized_name = normalize_tool_name(&tool.name);
-            let tool_call = ToolCall::new(normalized_name.to_string(), tool.input.clone());
+            let tool_call = ToolCall::new(tool.name.clone(), tool.input.clone());
             let action = match Action::delegate_tool(&tool_call) {
                 Ok(a) => a,
                 Err(e) => {

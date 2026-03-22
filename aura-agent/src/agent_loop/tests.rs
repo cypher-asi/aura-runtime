@@ -63,7 +63,7 @@ async fn test_agent_loop_full_integration() {
     let provider = MockProvider::new()
         .with_response(MockResponse::tool_use(
             "tool_1",
-            "fs_read",
+            "read_file",
             serde_json::json!({"path": "test.txt"}),
         ))
         .with_response(MockResponse::text("All done!"));
@@ -75,7 +75,7 @@ async fn test_agent_loop_full_integration() {
     let agent = AgentLoop::new(config);
     let messages = vec![Message::user("Read test.txt")];
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object"}),
     )];
@@ -118,7 +118,7 @@ async fn test_max_tokens_with_pending_tools_injects_errors() {
         .with_response(
             MockResponse::tool_use(
                 "tool_1",
-                "fs_read",
+                "read_file",
                 serde_json::json!({"path": "big_file.txt"}),
             )
             .with_stop_reason(StopReason::MaxTokens),
@@ -132,7 +132,7 @@ async fn test_max_tokens_with_pending_tools_injects_errors() {
     let agent = AgentLoop::new(config);
     let messages = vec![Message::user("Read big_file.txt")];
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object"}),
     )];
@@ -211,7 +211,7 @@ async fn test_compaction_uses_api_input_tokens() {
         stop_reason: StopReason::ToolUse,
         content: vec![ContentBlock::tool_use(
             "tool_1",
-            "fs_read",
+            "read_file",
             serde_json::json!({"path": "big.txt"}),
         )],
         usage: Usage::new(180_000, 50),
@@ -234,7 +234,7 @@ async fn test_compaction_uses_api_input_tokens() {
     let agent = AgentLoop::new(config);
     let messages = vec![Message::user("go")];
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object"}),
     )];

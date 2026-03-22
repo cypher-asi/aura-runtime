@@ -326,20 +326,20 @@ mod tests {
     #[test]
     fn test_tool_execution_failed() {
         let err = AuraError::ToolExecutionFailed {
-            tool: "fs_read".to_string(),
+            tool: "read_file".to_string(),
             reason: "permission denied".to_string(),
         };
 
         let display = err.to_string();
         assert!(display.contains("tool execution failed"));
-        assert!(display.contains("fs_read"));
+        assert!(display.contains("read_file"));
         assert!(display.contains("permission denied"));
     }
 
     #[test]
     fn test_tool_timeout() {
         let err = AuraError::ToolTimeout {
-            tool: "cmd_run".to_string(),
+            tool: "run_command".to_string(),
             timeout_ms: 30000,
         };
 

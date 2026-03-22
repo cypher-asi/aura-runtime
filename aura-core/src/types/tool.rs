@@ -100,7 +100,7 @@ pub struct ExternalToolDefinition {
 /// A tool call request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
-    /// Tool name (e.g., `fs_ls`, `fs_read`, `cmd_run`)
+    /// Tool name (e.g., `list_files`, `read_file`, `run_command`)
     pub tool: String,
     /// Tool arguments (versioned JSON)
     pub args: serde_json::Value,
@@ -116,26 +116,26 @@ impl ToolCall {
         }
     }
 
-    /// Create an `fs_ls` tool call.
+    /// Create a `list_files` tool call.
     #[must_use]
     pub fn fs_ls(path: impl Into<String>) -> Self {
-        Self::new("fs_ls", serde_json::json!({ "path": path.into() }))
+        Self::new("list_files", serde_json::json!({ "path": path.into() }))
     }
 
-    /// Create an `fs_read` tool call.
+    /// Create a `read_file` tool call.
     #[must_use]
     pub fn fs_read(path: impl Into<String>, max_bytes: Option<usize>) -> Self {
         let mut args = serde_json::json!({ "path": path.into() });
         if let Some(max) = max_bytes {
             args["max_bytes"] = serde_json::json!(max);
         }
-        Self::new("fs_read", args)
+        Self::new("read_file", args)
     }
 
-    /// Create an `fs_stat` tool call.
+    /// Create a `stat_file` tool call.
     #[must_use]
     pub fn fs_stat(path: impl Into<String>) -> Self {
-        Self::new("fs_stat", serde_json::json!({ "path": path.into() }))
+        Self::new("stat_file", serde_json::json!({ "path": path.into() }))
     }
 }
 

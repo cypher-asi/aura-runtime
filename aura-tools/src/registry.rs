@@ -120,10 +120,10 @@ mod tests {
         let tools = registry.list();
 
         assert!(tools.len() >= 7);
-        assert!(registry.has("fs_read"));
-        assert!(registry.has("fs_write"));
+        assert!(registry.has("read_file"));
+        assert!(registry.has("write_file"));
         assert!(registry.has("search_code"));
-        assert!(registry.has("cmd_run"));
+        assert!(registry.has("run_command"));
     }
 
     #[test]
@@ -131,19 +131,19 @@ mod tests {
         let registry = DefaultToolRegistry::read_only();
         let _tools = registry.list();
 
-        assert!(registry.has("fs_read"));
-        assert!(registry.has("fs_ls"));
+        assert!(registry.has("read_file"));
+        assert!(registry.has("list_files"));
         assert!(registry.has("search_code"));
-        assert!(!registry.has("fs_write"));
-        assert!(!registry.has("cmd_run"));
+        assert!(!registry.has("write_file"));
+        assert!(!registry.has("run_command"));
     }
 
     #[test]
     fn test_get_tool() {
         let registry = DefaultToolRegistry::new();
-        let tool = registry.get("fs_read").unwrap();
+        let tool = registry.get("read_file").unwrap();
 
-        assert_eq!(tool.name, "fs_read");
+        assert_eq!(tool.name, "read_file");
         assert!(!tool.description.is_empty());
         assert!(tool.input_schema.get("properties").is_some());
     }
@@ -164,10 +164,10 @@ mod tests {
     #[test]
     fn test_unregister_tool() {
         let mut registry = DefaultToolRegistry::new();
-        assert!(registry.has("cmd_run"));
+        assert!(registry.has("run_command"));
 
-        registry.unregister("cmd_run");
-        assert!(!registry.has("cmd_run"));
+        registry.unregister("run_command");
+        assert!(!registry.has("run_command"));
     }
 
     #[test]

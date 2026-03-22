@@ -88,7 +88,7 @@ pub fn fs_find(
         results.join("\n")
     };
 
-    Ok(ToolResult::success("fs_find", output)
+    Ok(ToolResult::success("find_files", output)
         .with_metadata("match_count", results.len().to_string()))
 }
 
@@ -98,12 +98,12 @@ pub struct FsFindTool;
 #[async_trait]
 impl Tool for FsFindTool {
     fn name(&self) -> &str {
-        "fs_find"
+        "find_files"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "fs_find".into(),
+            name: "find_files".into(),
             description: "Find files matching a glob pattern. Skips node_modules, target, .git, __pycache__, and dot-prefixed directories. Results capped at 200.".into(),
             input_schema: serde_json::json!({
                 "type": "object",

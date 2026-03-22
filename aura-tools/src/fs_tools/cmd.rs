@@ -166,7 +166,7 @@ pub fn output_to_tool_result(output: std::process::Output) -> Result<ToolResult,
     let exit_code = output.status.code().unwrap_or(-1);
 
     if output.status.success() {
-        let mut result = ToolResult::success("cmd_run", stdout);
+        let mut result = ToolResult::success("run_command", stdout);
         if !stderr.is_empty() {
             result.stderr = stderr.into_bytes().into();
         }
@@ -174,7 +174,7 @@ pub fn output_to_tool_result(output: std::process::Output) -> Result<ToolResult,
         Ok(result)
     } else {
         let structured = format!("exit_code: {exit_code}\nstdout:\n{stdout}\nstderr:\n{stderr}");
-        let mut result = ToolResult::failure("cmd_run", structured);
+        let mut result = ToolResult::failure("run_command", structured);
         result.exit_code = Some(exit_code);
         result = result.with_metadata("exit_code", exit_code.to_string());
         Ok(result)
@@ -308,12 +308,12 @@ pub struct CmdRunTool;
 #[async_trait]
 impl Tool for CmdRunTool {
     fn name(&self) -> &str {
-        "cmd_run"
+        "run_command"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "cmd_run".into(),
+            name: "run_command".into(),
             description:
                 "Run a shell command. Accepts either 'command' (shell string) or 'program'+'args'."
                     .into(),

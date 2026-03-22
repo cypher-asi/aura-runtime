@@ -19,7 +19,7 @@ use super::streaming;
 use super::{AgentLoop, AgentLoopConfig, LoopState};
 
 /// Tools whose successful results can be cached within a single agent run.
-const CACHEABLE_TOOLS: &[&str] = &["fs_read", "fs_ls", "fs_stat", "fs_find", "search_code"];
+const CACHEABLE_TOOLS: &[&str] = &["read_file", "list_files", "stat_file", "find_files", "search_code"];
 
 fn is_cacheable(tool_name: &str) -> bool {
     CACHEABLE_TOOLS.contains(&tool_name)

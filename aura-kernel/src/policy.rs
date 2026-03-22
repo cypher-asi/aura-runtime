@@ -35,10 +35,10 @@ pub enum PermissionLevel {
 pub fn default_tool_permission(tool: &str) -> PermissionLevel {
     match tool {
         // Safe read-only operations + command execution (autonomous operation)
-        "fs_ls" | "fs_read" | "fs_stat" | "search_code" | "cmd_run" => PermissionLevel::AlwaysAllow,
+        "list_files" | "read_file" | "stat_file" | "search_code" | "run_command" => PermissionLevel::AlwaysAllow,
 
         // Write operations need confirmation once per session
-        "fs_write" | "fs_edit" => PermissionLevel::AskOnce,
+        "write_file" | "edit_file" => PermissionLevel::AskOnce,
 
         // Unknown tools are denied by default
         _ => PermissionLevel::Deny,
@@ -72,15 +72,15 @@ impl Default for PolicyConfig {
 
         let mut allowed_tools = HashSet::new();
         // Read-only tools always allowed
-        allowed_tools.insert("fs_ls".to_string());
-        allowed_tools.insert("fs_read".to_string());
-        allowed_tools.insert("fs_stat".to_string());
+        allowed_tools.insert("list_files".to_string());
+        allowed_tools.insert("read_file".to_string());
+        allowed_tools.insert("stat_file".to_string());
         allowed_tools.insert("search_code".to_string());
         // Write tools allowed but require approval
-        allowed_tools.insert("fs_write".to_string());
-        allowed_tools.insert("fs_edit".to_string());
+        allowed_tools.insert("write_file".to_string());
+        allowed_tools.insert("edit_file".to_string());
         // Command execution
-        allowed_tools.insert("cmd_run".to_string());
+        allowed_tools.insert("run_command".to_string());
 
         Self {
             allowed_action_kinds,
@@ -103,9 +103,9 @@ impl PolicyConfig {
     #[must_use]
     pub fn restrictive() -> Self {
         let mut allowed_tools = HashSet::new();
-        allowed_tools.insert("fs_ls".to_string());
-        allowed_tools.insert("fs_read".to_string());
-        allowed_tools.insert("fs_stat".to_string());
+        allowed_tools.insert("list_files".to_string());
+        allowed_tools.insert("read_file".to_string());
+        allowed_tools.insert("stat_file".to_string());
         allowed_tools.insert("search_code".to_string());
 
         Self {
@@ -333,15 +333,15 @@ mod tests {
     #[test]
     fn test_default_permissions() {
         assert_eq!(
-            default_tool_permission("fs_read"),
+            default_tool_permission("read_file"),
             PermissionLevel::AlwaysAllow
         );
         assert_eq!(
-            default_tool_permission("fs_write"),
+            default_tool_permission("write_file"),
             PermissionLevel::AskOnce
         );
         assert_eq!(
-            default_tool_permission("cmd_run"),
+            default_tool_permission("run_command"),
             PermissionLevel::AlwaysAllow
         );
         assert_eq!(
@@ -386,30 +386,30 @@ mod tests {
         let policy = Policy::with_defaults();
 
         // fs_write requires approval initially
-        assert!(policy.requires_approval("fs_write"));
+        assert!(policy.requires_approval("write_file"));
 
         // Approve for session
-        policy.approve_for_session("fs_write");
+        policy.approve_for_session("write_file");
 
         // Now it's approved
-        assert!(!policy.requires_approval("fs_write"));
-        assert!(policy.is_session_approved("fs_write"));
+        assert!(!policy.requires_approval("write_file"));
+        assert!(policy.is_session_approved("write_file"));
 
         // Clear approvals
         policy.clear_session_approvals();
-        assert!(policy.requires_approval("fs_write"));
+        assert!(policy.requires_approval("write_file"));
     }
 
     #[test]
     fn test_permission_override() {
         let config =
-            PolicyConfig::default().with_tool_permission("fs_read", PermissionLevel::AskOnce);
+            PolicyConfig::default().with_tool_permission("read_file", PermissionLevel::AskOnce);
 
         let policy = Policy::new(config);
 
         // Should use override, not default
         assert_eq!(
-            policy.check_tool_permission("fs_read"),
+            policy.check_tool_permission("read_file"),
             PermissionLevel::AskOnce
         );
     }
@@ -421,13 +421,13 @@ mod tests {
 
         // Read-only tools allowed
         assert_eq!(
-            policy.check_tool_permission("fs_read"),
+            policy.check_tool_permission("read_file"),
             PermissionLevel::AlwaysAllow
         );
 
         // Write tools denied
         assert_eq!(
-            policy.check_tool_permission("fs_write"),
+            policy.check_tool_permission("write_file"),
             PermissionLevel::Deny
         );
     }
@@ -436,41 +436,41 @@ mod tests {
     fn test_revoke_session_approval() {
         let policy = Policy::with_defaults();
 
-        policy.approve_for_session("fs_write");
-        assert!(policy.is_session_approved("fs_write"));
+        policy.approve_for_session("write_file");
+        assert!(policy.is_session_approved("write_file"));
 
-        policy.revoke_session_approval("fs_write");
-        assert!(!policy.is_session_approved("fs_write"));
-        assert!(policy.requires_approval("fs_write"));
+        policy.revoke_session_approval("write_file");
+        assert!(!policy.is_session_approved("write_file"));
+        assert!(policy.requires_approval("write_file"));
     }
 
     #[test]
     fn test_clear_session_approvals_multiple() {
         let policy = Policy::with_defaults();
 
-        policy.approve_for_session("fs_write");
-        policy.approve_for_session("fs_edit");
-        assert!(policy.is_session_approved("fs_write"));
-        assert!(policy.is_session_approved("fs_edit"));
+        policy.approve_for_session("write_file");
+        policy.approve_for_session("edit_file");
+        assert!(policy.is_session_approved("write_file"));
+        assert!(policy.is_session_approved("edit_file"));
 
         policy.clear_session_approvals();
-        assert!(!policy.is_session_approved("fs_write"));
-        assert!(!policy.is_session_approved("fs_edit"));
+        assert!(!policy.is_session_approved("write_file"));
+        assert!(!policy.is_session_approved("edit_file"));
     }
 
     #[test]
     fn test_revoke_nonexistent_approval_is_noop() {
         let policy = Policy::with_defaults();
-        policy.revoke_session_approval("fs_write");
-        assert!(!policy.is_session_approved("fs_write"));
+        policy.revoke_session_approval("write_file");
+        assert!(!policy.is_session_approved("write_file"));
     }
 
     #[test]
     fn test_always_allow_does_not_require_approval() {
         let policy = Policy::with_defaults();
-        assert!(!policy.requires_approval("fs_read"));
-        assert!(!policy.requires_approval("fs_ls"));
-        assert!(!policy.requires_approval("cmd_run"));
+        assert!(!policy.requires_approval("read_file"));
+        assert!(!policy.requires_approval("list_files"));
+        assert!(!policy.requires_approval("run_command"));
     }
 
     #[test]
@@ -482,7 +482,7 @@ mod tests {
     #[test]
     fn test_check_tool_always_allow() {
         let policy = Policy::with_defaults();
-        let result = policy.check_tool("fs_read", &serde_json::json!({}));
+        let result = policy.check_tool("read_file", &serde_json::json!({}));
         assert!(result.allowed);
         assert!(result.reason.is_none());
     }
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn test_check_tool_ask_once_not_approved() {
         let policy = Policy::with_defaults();
-        let result = policy.check_tool("fs_write", &serde_json::json!({}));
+        let result = policy.check_tool("write_file", &serde_json::json!({}));
         assert!(!result.allowed);
         assert!(result.reason.unwrap().contains("requires approval"));
     }
@@ -506,18 +506,18 @@ mod tests {
     #[test]
     fn test_check_tool_ask_once_after_approval() {
         let policy = Policy::with_defaults();
-        policy.approve_for_session("fs_write");
-        let result = policy.check_tool("fs_write", &serde_json::json!({}));
+        policy.approve_for_session("write_file");
+        let result = policy.check_tool("write_file", &serde_json::json!({}));
         assert!(result.allowed);
     }
 
     #[test]
     fn test_always_ask_permission_override() {
         let config =
-            PolicyConfig::default().with_tool_permission("fs_read", PermissionLevel::AlwaysAsk);
+            PolicyConfig::default().with_tool_permission("read_file", PermissionLevel::AlwaysAsk);
         let policy = Policy::new(config);
 
-        let result = policy.check_tool("fs_read", &serde_json::json!({}));
+        let result = policy.check_tool("read_file", &serde_json::json!({}));
         assert!(!result.allowed);
         assert!(result
             .reason
@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn test_permissive_config_includes_cmd_run() {
         let config = PolicyConfig::permissive();
-        assert!(config.allowed_tools.contains("cmd_run"));
+        assert!(config.allowed_tools.contains("run_command"));
     }
 
     #[test]

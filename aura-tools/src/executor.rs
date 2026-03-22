@@ -64,10 +64,16 @@ impl ToolExecutor {
         let tool_name = &tool_call.tool;
 
         // Category-level permission checks
-        if tool_name.starts_with("fs_") && !self.config.enable_fs {
+        const FS_TOOLS: &[&str] = &[
+            "read_file", "write_file", "edit_file", "delete_file",
+            "list_files", "find_files", "stat_file", "search_code",
+        ];
+        const CMD_TOOLS: &[&str] = &["run_command"];
+
+        if FS_TOOLS.contains(&tool_name.as_str()) && !self.config.enable_fs {
             return Err(ToolError::ToolDisabled(tool_name.clone()));
         }
-        if tool_name.starts_with("cmd_") && !self.config.enable_commands {
+        if CMD_TOOLS.contains(&tool_name.as_str()) && !self.config.enable_commands {
             return Err(ToolError::ToolDisabled(tool_name.clone()));
         }
 
@@ -202,7 +208,7 @@ mod tests {
         let mut config = ToolConfig::default();
         config.enable_commands = false;
         let executor = ToolExecutor::new(config);
-        let tool_call = ToolCall::new("cmd_run", serde_json::json!({"program": "ls"}));
+        let tool_call = ToolCall::new("run_command", serde_json::json!({"program": "ls"}));
         let action = Action::delegate_tool(&tool_call).unwrap();
 
         let effect = executor.execute(&ctx, &action).await.unwrap();
@@ -227,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_custom_tool() {
         let mut executor = ToolExecutor::with_defaults();
-        assert!(executor.tools.contains_key("fs_ls"));
+        assert!(executor.tools.contains_key("list_files"));
         assert!(!executor.tools.contains_key("custom_tool"));
 
         // Custom tools can be registered at runtime

@@ -148,7 +148,7 @@ pub fn fs_edit(
     fs::write(&resolved, &final_content)?;
 
     Ok(ToolResult::success(
-        "fs_edit",
+        "edit_file",
         format!("Replaced {replacements} occurrence(s) in {path}"),
     )
     .with_metadata("replacements", replacements.to_string()))
@@ -160,12 +160,12 @@ pub struct FsEditTool;
 #[async_trait]
 impl Tool for FsEditTool {
     fn name(&self) -> &str {
-        "fs_edit"
+        "edit_file"
     }
 
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "fs_edit".into(),
+            name: "edit_file".into(),
             description: "Edit an existing file by replacing a specific portion of text. By default replaces only the first occurrence.".into(),
             input_schema: serde_json::json!({
                 "type": "object",

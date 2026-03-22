@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use tracing::{debug, error, warn};
 
 /// Tools whose results are safe to cache (no side effects).
-const CACHEABLE_TOOLS: &[&str] = &["fs_ls", "fs_read", "fs_stat", "fs_find", "search_code"];
+const CACHEABLE_TOOLS: &[&str] = &["list_files", "read_file", "stat_file", "find_files", "search_code"];
 
 /// Build a deterministic cache key from tool name and arguments.
 ///

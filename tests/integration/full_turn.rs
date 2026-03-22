@@ -73,7 +73,7 @@ async fn test_turn_with_tool_use() {
         MockProvider::new()
             .with_response(MockResponse::tool_use(
                 "tool_1",
-                "fs_read",
+                "read_file",
                 serde_json::json!({ "path": "test.txt" }),
             ))
             .with_response(MockResponse::text("I read the file!")),
@@ -99,7 +99,7 @@ async fn test_turn_with_tool_use() {
     
     // First step should have executed tool
     assert!(!result.entries[0].executed_tools.is_empty());
-    assert_eq!(result.entries[0].executed_tools[0].tool_name, "fs_read");
+    assert_eq!(result.entries[0].executed_tools[0].tool_name, "read_file");
 }
 
 #[tokio::test]
@@ -148,7 +148,7 @@ async fn test_turn_max_steps_limit() {
     let provider = Arc::new(
         MockProvider::new().with_default_response(MockResponse::tool_use(
             "tool_1",
-            "fs_ls",
+            "list_files",
             serde_json::json!({ "path": "." }),
         )),
     );

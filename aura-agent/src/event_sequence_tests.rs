@@ -205,7 +205,7 @@ async fn tool_use_emits_tool_start_input_snapshot_then_result() {
     let inner = MockProvider::new()
         .with_response(MockResponse::tool_use(
             "tool_1",
-            "fs_read",
+            "read_file",
             serde_json::json!({"path": "test.txt"}),
         ))
         .with_response(MockResponse::text("All done!"));
@@ -223,7 +223,7 @@ async fn tool_use_emits_tool_start_input_snapshot_then_result() {
     let (tx, rx) = mpsc::unbounded_channel();
     let messages = vec![Message::user("Read test.txt")];
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object"}),
     )];
@@ -265,7 +265,7 @@ async fn tool_use_emits_tool_start_input_snapshot_then_result() {
 
     if let AgentLoopEvent::ToolStart { id, name } = &events[tool_start_pos.unwrap()] {
         assert_eq!(id, "tool_1");
-        assert_eq!(name, "fs_read");
+        assert_eq!(name, "read_file");
     } else {
         panic!("Expected ToolStart");
     }
@@ -278,7 +278,7 @@ async fn tool_use_emits_tool_start_input_snapshot_then_result() {
     } = &events[tool_result_pos.unwrap()]
     {
         assert_eq!(tool_use_id, "tool_1");
-        assert_eq!(tool_name, "fs_read");
+        assert_eq!(tool_name, "read_file");
         assert_eq!(content, "file contents here");
         assert!(!is_error);
     } else {
@@ -293,7 +293,7 @@ async fn budget_warning_emits_warning_event() {
     let inner = MockProvider::new()
         .with_response(MockResponse::tool_use(
             "t0",
-            "fs_read",
+            "read_file",
             serde_json::json!({"path": "a.txt"}),
         ))
         .with_response(MockResponse::text("Done"));
@@ -313,7 +313,7 @@ async fn budget_warning_emits_warning_event() {
     let (tx, rx) = mpsc::unbounded_channel();
     let messages = vec![Message::user("go")];
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object"}),
     )];
@@ -350,7 +350,7 @@ async fn exploration_limit_emits_warning_event() {
     for i in 0..3 {
         builder = builder.with_response(MockResponse::tool_use(
             format!("t{i}"),
-            "fs_read",
+            "read_file",
             serde_json::json!({"path": format!("file{i}.txt")}),
         ));
     }
@@ -371,7 +371,7 @@ async fn exploration_limit_emits_warning_event() {
     let (tx, rx) = mpsc::unbounded_channel();
     let messages = vec![Message::user("explore")];
     let tools = vec![ToolDefinition::new(
-        "fs_read",
+        "read_file",
         "Read a file",
         serde_json::json!({"type": "object"}),
     )];

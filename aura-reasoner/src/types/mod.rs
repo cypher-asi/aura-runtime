@@ -105,7 +105,7 @@ mod tests {
             Role::Assistant,
             vec![
                 ContentBlock::text("Let me help you."),
-                ContentBlock::tool_use("tool1", "fs_read", serde_json::json!({"path": "test.txt"})),
+                ContentBlock::tool_use("tool1", "read_file", serde_json::json!({"path": "test.txt"})),
             ],
         );
 
@@ -232,12 +232,12 @@ mod tests {
         let auto = ToolChoice::Auto;
         let none = ToolChoice::None;
         let required = ToolChoice::Required;
-        let specific = ToolChoice::tool("fs_read");
+        let specific = ToolChoice::tool("read_file");
 
         assert!(matches!(auto, ToolChoice::Auto));
         assert!(matches!(none, ToolChoice::None));
         assert!(matches!(required, ToolChoice::Required));
-        assert!(matches!(specific, ToolChoice::Tool { name } if name == "fs_read"));
+        assert!(matches!(specific, ToolChoice::Tool { name } if name == "read_file"));
     }
 
     // ========================================================================
@@ -356,7 +356,7 @@ mod tests {
             index: 0,
             content_type: StreamContentType::ToolUse {
                 id: "tool1".to_string(),
-                name: "fs_read".to_string(),
+                name: "read_file".to_string(),
             },
         });
         acc.process(&StreamEvent::InputJsonDelta {
@@ -373,7 +373,7 @@ mod tests {
 
         assert_eq!(acc.tool_uses.len(), 1);
         assert_eq!(acc.tool_uses[0].id, "tool1");
-        assert_eq!(acc.tool_uses[0].name, "fs_read");
+        assert_eq!(acc.tool_uses[0].name, "read_file");
         assert_eq!(acc.tool_uses[0].input_json, r#"{"path":"test.txt"}"#);
     }
 
@@ -426,7 +426,7 @@ mod tests {
             index: 2,
             content_type: StreamContentType::ToolUse {
                 id: "tool1".to_string(),
-                name: "fs_ls".to_string(),
+                name: "list_files".to_string(),
             },
         });
         acc.process(&StreamEvent::InputJsonDelta {
@@ -502,7 +502,7 @@ mod tests {
 
         acc.tool_uses.push(AccumulatedToolUse {
             id: "tool1".to_string(),
-            name: "fs_read".to_string(),
+            name: "read_file".to_string(),
             input_json: r#"{"path":"test.txt"}"#.to_string(),
         });
         acc.stop_reason = Some(StopReason::ToolUse);
@@ -514,7 +514,7 @@ mod tests {
 
         if let ContentBlock::ToolUse { id, name, input } = &response.message.content[0] {
             assert_eq!(id, "tool1");
-            assert_eq!(name, "fs_read");
+            assert_eq!(name, "read_file");
             assert_eq!(input["path"], "test.txt");
         } else {
             panic!("Expected ToolUse block");
@@ -568,7 +568,7 @@ mod tests {
             index: 0,
             content_type: StreamContentType::ToolUse {
                 id: "tool1".to_string(),
-                name: "fs_ls".to_string(),
+                name: "list_files".to_string(),
             },
         });
         acc.process(&StreamEvent::InputJsonDelta {
@@ -580,7 +580,7 @@ mod tests {
             index: 1,
             content_type: StreamContentType::ToolUse {
                 id: "tool2".to_string(),
-                name: "fs_read".to_string(),
+                name: "read_file".to_string(),
             },
         });
         acc.process(&StreamEvent::InputJsonDelta {
@@ -589,8 +589,8 @@ mod tests {
         acc.process(&StreamEvent::ContentBlockStop { index: 1 });
 
         assert_eq!(acc.tool_uses.len(), 2);
-        assert_eq!(acc.tool_uses[0].name, "fs_ls");
-        assert_eq!(acc.tool_uses[1].name, "fs_read");
+        assert_eq!(acc.tool_uses[0].name, "list_files");
+        assert_eq!(acc.tool_uses[1].name, "read_file");
     }
 
     #[test]
@@ -696,7 +696,7 @@ mod tests {
             index: 1,
             content_type: StreamContentType::ToolUse {
                 id: "t1".to_string(),
-                name: "fs_read".to_string(),
+                name: "read_file".to_string(),
             },
         });
         acc.process(&StreamEvent::InputJsonDelta {
@@ -708,7 +708,7 @@ mod tests {
             index: 2,
             content_type: StreamContentType::ToolUse {
                 id: "t2".to_string(),
-                name: "fs_ls".to_string(),
+                name: "list_files".to_string(),
             },
         });
         acc.process(&StreamEvent::InputJsonDelta {
@@ -794,13 +794,13 @@ mod tests {
 
     #[test]
     fn test_content_block_tool_use_serialization_round_trip() {
-        let block = ContentBlock::tool_use("id1", "cmd_run", serde_json::json!({"cmd": "ls"}));
+        let block = ContentBlock::tool_use("id1", "run_command", serde_json::json!({"cmd": "ls"}));
         let json = serde_json::to_string(&block).unwrap();
         let parsed: ContentBlock = serde_json::from_str(&json).unwrap();
         match parsed {
             ContentBlock::ToolUse { id, name, input } => {
                 assert_eq!(id, "id1");
-                assert_eq!(name, "cmd_run");
+                assert_eq!(name, "run_command");
                 assert_eq!(input["cmd"], "ls");
             }
             _ => panic!("Expected ToolUse"),

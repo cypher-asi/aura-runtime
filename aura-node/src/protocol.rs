@@ -337,11 +337,11 @@ mod tests {
             session_id: "sess_1".to_string(),
             tools: vec![
                 ToolInfo {
-                    name: "fs_read".to_string(),
+                    name: "read_file".to_string(),
                     description: "Read a file".to_string(),
                 },
                 ToolInfo {
-                    name: "fs_write".to_string(),
+                    name: "write_file".to_string(),
                     description: "Write a file".to_string(),
                 },
             ],
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(json["type"], "session_ready");
         assert_eq!(json["session_id"], "sess_1");
         assert_eq!(json["tools"].as_array().unwrap().len(), 2);
-        assert_eq!(json["tools"][0]["name"], "fs_read");
+        assert_eq!(json["tools"][0]["name"], "read_file");
     }
 
     #[test]
@@ -387,31 +387,31 @@ mod tests {
     fn test_outbound_tool_use_start() {
         let msg = OutboundMessage::ToolUseStart(ToolUseStart {
             id: "tu_1".to_string(),
-            name: "fs_read".to_string(),
+            name: "read_file".to_string(),
         });
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "tool_use_start");
         assert_eq!(json["id"], "tu_1");
-        assert_eq!(json["name"], "fs_read");
+        assert_eq!(json["name"], "read_file");
     }
 
     #[test]
     fn test_outbound_tool_result() {
         let msg = OutboundMessage::ToolResult(ToolResultMsg {
-            name: "fs_read".to_string(),
+            name: "read_file".to_string(),
             result: "file contents here".to_string(),
             is_error: false,
         });
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "tool_result");
-        assert_eq!(json["name"], "fs_read");
+        assert_eq!(json["name"], "read_file");
         assert!(!json["is_error"].as_bool().unwrap());
     }
 
     #[test]
     fn test_outbound_tool_result_error() {
         let msg = OutboundMessage::ToolResult(ToolResultMsg {
-            name: "fs_write".to_string(),
+            name: "write_file".to_string(),
             result: "permission denied".to_string(),
             is_error: true,
         });

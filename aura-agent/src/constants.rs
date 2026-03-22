@@ -71,25 +71,15 @@ pub const WRITE_COOLDOWN_ITERATIONS: usize = 2;
 
 /// Tools classified as exploration (read-only, non-modifying).
 pub const EXPLORATION_TOOLS: &[&str] = &[
-    "fs_read",
     "read_file",
-    "fs_ls",
     "list_files",
-    "fs_find",
     "find_files",
-    "fs_stat",
+    "stat_file",
     "search_code",
 ];
 
 /// Tools that perform writes (mutations).
-pub const WRITE_TOOLS: &[&str] = &[
-    "fs_write",
-    "write_file",
-    "fs_edit",
-    "edit_file",
-    "fs_delete",
-    "delete_file",
-];
+pub const WRITE_TOOLS: &[&str] = &["write_file", "edit_file", "delete_file"];
 
 /// Tools that run commands.
-pub const COMMAND_TOOLS: &[&str] = &["cmd_run", "run_command"];
+pub const COMMAND_TOOLS: &[&str] = &["run_command"];

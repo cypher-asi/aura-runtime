@@ -1163,7 +1163,7 @@ fn format_tool_summary(tool_name: &str, args_json: &str) -> String {
 /// Format a tool summary given parsed JSON args.
 fn format_tool_summary_from_value(tool_name: &str, args: &serde_json::Value) -> String {
     match tool_name {
-        "cmd_run" => {
+        "run_command" => {
             let program = args.get("program").and_then(|v| v.as_str()).unwrap_or("");
             let cmd_args = args
                 .get("args")
@@ -1182,12 +1182,12 @@ fn format_tool_summary_from_value(tool_name: &str, args: &serde_json::Value) -> 
                 format!("{program} {cmd_args}")
             }
         }
-        "fs_read" | "file_read" => args
+        "read_file" => args
             .get("path")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        "fs_write" | "file_write" => args
+        "write_file" => args
             .get("path")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -1319,7 +1319,7 @@ mod tests {
         let mut app = App::new();
         app.pending_approval = Some(PendingApproval {
             id: "t1".to_string(),
-            tool: "fs_write".to_string(),
+            tool: "write_file".to_string(),
             description: "Write file".to_string(),
         });
         app.state = AppState::AwaitingApproval;
