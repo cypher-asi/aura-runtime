@@ -62,6 +62,8 @@ pub struct AgentLoopConfig {
     pub system_prompt: String,
     /// Model name.
     pub model: String,
+    /// JWT auth token for proxy routing.
+    pub auth_token: Option<String>,
 }
 
 impl Default for AgentLoopConfig {
@@ -82,6 +84,7 @@ impl Default for AgentLoopConfig {
             extra_tools: Vec::new(),
             system_prompt: String::new(),
             model: "claude-opus-4-5-20251101".to_string(),
+            auth_token: None,
         }
     }
 }
@@ -167,6 +170,7 @@ impl AgentLoop {
                 .messages(messages.clone())
                 .tools(tools.clone())
                 .max_tokens(thinking_budget)
+                .auth_token(self.config.auth_token.clone())
                 .build();
 
             let response = match provider.complete(request).await {

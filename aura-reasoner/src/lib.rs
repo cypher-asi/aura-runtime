@@ -28,7 +28,7 @@ mod request;
 mod retry;
 pub mod types;
 
-pub use anthropic::{AnthropicConfig, AnthropicProvider};
+pub use anthropic::{AnthropicConfig, AnthropicProvider, RoutingMode};
 pub use client::HttpReasoner;
 pub use mock::{MockProvider, MockReasoner, MockResponse};
 pub use request::{ProposeLimits, ProposeRequest, RecordSummary};
