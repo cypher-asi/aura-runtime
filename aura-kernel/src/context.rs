@@ -94,16 +94,19 @@ impl ContextBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aura_core::{Action, ActionId, ActionKind, AgentId, Decision, ProposalSet, TransactionType};
+    use aura_core::{
+        Action, ActionId, ActionKind, AgentId, Decision, ProposalSet, TransactionType,
+    };
     use bytes::Bytes;
 
-    fn create_test_entry(seq: u64, agent_id: AgentId, tx_type: TransactionType, payload: &str) -> RecordEntry {
-        let tx = Transaction::new_chained(
-            agent_id,
-            tx_type,
-            Bytes::from(payload.to_string()),
-            None,
-        );
+    fn create_test_entry(
+        seq: u64,
+        agent_id: AgentId,
+        tx_type: TransactionType,
+        payload: &str,
+    ) -> RecordEntry {
+        let tx =
+            Transaction::new_chained(agent_id, tx_type, Bytes::from(payload.to_string()), None);
         RecordEntry::builder(seq, tx)
             .context_hash([seq as u8; 32])
             .proposals(ProposalSet::new())
@@ -111,19 +114,23 @@ mod tests {
             .build()
     }
 
-    fn create_entry_with_actions(seq: u64, agent_id: AgentId, action_kinds: &[ActionKind]) -> RecordEntry {
+    fn create_entry_with_actions(
+        seq: u64,
+        agent_id: AgentId,
+        action_kinds: &[ActionKind],
+    ) -> RecordEntry {
         let tx = Transaction::user_prompt(agent_id, format!("entry {seq}"));
-        
+
         let actions: Vec<Action> = action_kinds
             .iter()
             .map(|&kind| Action::new(ActionId::generate(), kind, Bytes::new()))
             .collect();
-        
+
         let mut decision = Decision::new();
         for action in &actions {
             decision.accept(action.action_id);
         }
-        
+
         RecordEntry::builder(seq, tx)
             .context_hash([seq as u8; 32])
             .proposals(ProposalSet::new())
@@ -207,7 +214,11 @@ mod tests {
         assert_eq!(ctx.record_summaries.len(), 1);
         assert_eq!(ctx.record_summaries[0].seq, 1);
         assert_eq!(ctx.record_summaries[0].tx_kind, "UserPrompt");
-        assert!(ctx.record_summaries[0].payload_summary.as_ref().unwrap().contains("hello world"));
+        assert!(ctx.record_summaries[0]
+            .payload_summary
+            .as_ref()
+            .unwrap()
+            .contains("hello world"));
     }
 
     #[test]
@@ -215,19 +226,20 @@ mod tests {
         let agent_id = AgentId::generate();
         let tx = Transaction::user_prompt(agent_id, "current");
 
-        let entry = create_entry_with_actions(
-            1,
-            agent_id,
-            &[ActionKind::Delegate, ActionKind::Reason],
-        );
+        let entry =
+            create_entry_with_actions(1, agent_id, &[ActionKind::Delegate, ActionKind::Reason]);
 
         let ctx = ContextBuilder::new(&tx)
             .with_record_window(vec![entry])
             .build();
 
         assert_eq!(ctx.record_summaries[0].action_kinds.len(), 2);
-        assert!(ctx.record_summaries[0].action_kinds.contains(&ActionKind::Delegate));
-        assert!(ctx.record_summaries[0].action_kinds.contains(&ActionKind::Reason));
+        assert!(ctx.record_summaries[0]
+            .action_kinds
+            .contains(&ActionKind::Delegate));
+        assert!(ctx.record_summaries[0]
+            .action_kinds
+            .contains(&ActionKind::Reason));
     }
 
     #[test]
@@ -260,9 +272,7 @@ mod tests {
             create_test_entry(4, agent_id, TransactionType::UserPrompt, "after session"),
         ];
 
-        let ctx = ContextBuilder::new(&tx)
-            .with_record_window(entries)
-            .build();
+        let ctx = ContextBuilder::new(&tx).with_record_window(entries).build();
 
         assert_eq!(ctx.record_summaries.len(), 4);
         assert_eq!(ctx.record_summaries[0].tx_kind, "UserPrompt");
@@ -275,9 +285,7 @@ mod tests {
     fn test_context_empty_window() {
         let tx = Transaction::user_prompt(AgentId::generate(), "test");
 
-        let ctx = ContextBuilder::new(&tx)
-            .with_record_window(vec![])
-            .build();
+        let ctx = ContextBuilder::new(&tx).with_record_window(vec![]).build();
 
         assert!(ctx.record_summaries.is_empty());
         // Context hash should still be valid
@@ -294,10 +302,8 @@ mod tests {
         let entry1 = RecordEntry::builder(1, tx1.clone())
             .context_hash([1u8; 32])
             .build();
-        
-        let entry2 = RecordEntry::builder(1, tx1)
-            .context_hash([2u8; 32])
-            .build();
+
+        let entry2 = RecordEntry::builder(1, tx1).context_hash([2u8; 32]).build();
 
         let ctx1 = ContextBuilder::new(&tx)
             .with_record_window(vec![entry1])
@@ -328,17 +334,17 @@ mod tests {
             create_test_entry(9, agent_id, TransactionType::ProcessComplete, "complete"),
         ];
 
-        let ctx = ContextBuilder::new(&tx)
-            .with_record_window(entries)
-            .build();
+        let ctx = ContextBuilder::new(&tx).with_record_window(entries).build();
 
         assert_eq!(ctx.record_summaries.len(), 9);
-        
+
         // Verify all types are represented
-        let types: Vec<&str> = ctx.record_summaries.iter()
+        let types: Vec<&str> = ctx
+            .record_summaries
+            .iter()
             .map(|s| s.tx_kind.as_str())
             .collect();
-        
+
         assert!(types.contains(&"UserPrompt"));
         assert!(types.contains(&"AgentMsg"));
         assert!(types.contains(&"SessionStart"));

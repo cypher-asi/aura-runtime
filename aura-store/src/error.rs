@@ -59,7 +59,10 @@ mod tests {
         assert!(display.contains("record entry not found"));
         assert!(display.contains("seq=42"));
 
-        let err = StoreError::SequenceMismatch { expected: 10, actual: 5 };
+        let err = StoreError::SequenceMismatch {
+            expected: 10,
+            actual: 5,
+        };
         let display = err.to_string();
         assert!(display.contains("sequence mismatch"));
         assert!(display.contains("expected 10"));

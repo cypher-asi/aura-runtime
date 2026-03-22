@@ -57,6 +57,7 @@ pub struct PendingApproval {
 }
 
 /// Main application struct managing UI state.
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     /// Current application state
     state: AppState,
@@ -782,10 +783,8 @@ impl App {
                 if let Some(tx) = &self.event_tx {
                     let _ = tx.try_send(UiEvent::NewSession);
                 }
-                self.notification = Some((
-                    "New session started".to_string(),
-                    NotificationType::Success,
-                ));
+                self.notification =
+                    Some(("New session started".to_string(), NotificationType::Success));
             }
             _ => {
                 self.notification = Some((
@@ -813,6 +812,7 @@ impl App {
     }
 
     /// Process a UI command from the kernel.
+    #[allow(clippy::too_many_lines)]
     pub fn process_command(&mut self, cmd: UiCommand) {
         debug!(?cmd, "Processing UI command");
         match cmd {
@@ -880,7 +880,7 @@ impl App {
             UiCommand::ShowTool(data) => {
                 let tool = ToolCard::new(&data.id, &data.name).with_args(&data.args);
                 self.add_tool(tool);
-                
+
                 // Add tool execution to conversation as a system message
                 let tool_summary = format_tool_summary(&data.name, &data.args);
                 self.add_message(Message::new(
@@ -905,7 +905,7 @@ impl App {
                         tool.set_result(&result);
                     }
                 }
-                
+
                 // Add tool result to conversation
                 if !result.is_empty() {
                     let (icon, prefix) = if success {
@@ -917,7 +917,7 @@ impl App {
                     let display_result = if result.len() > 200 {
                         format!("{}...", &result[..197])
                     } else {
-                        result.clone()
+                        result
                     };
                     self.add_message(Message::new(
                         MessageRole::System,
@@ -939,7 +939,10 @@ impl App {
             }
             UiCommand::ShowError(msg) => {
                 // Add error to conversation as a system message
-                self.add_message(Message::new(MessageRole::System, &format!("⛔ Error: {msg}")));
+                self.add_message(Message::new(
+                    MessageRole::System,
+                    &format!("⛔ Error: {msg}"),
+                ));
                 self.notification = Some((msg, NotificationType::Error));
             }
             UiCommand::ShowSuccess(msg) => {
@@ -949,7 +952,10 @@ impl App {
             }
             UiCommand::ShowWarning(msg) => {
                 // Add warning to conversation as a system message
-                self.add_message(Message::new(MessageRole::System, &format!("⚠ Warning: {msg}")));
+                self.add_message(Message::new(
+                    MessageRole::System,
+                    &format!("⚠ Warning: {msg}"),
+                ));
                 self.notification = Some((msg, NotificationType::Warning));
             }
             UiCommand::Complete => {
@@ -992,7 +998,11 @@ impl App {
             UiCommand::SetAgents(agents) => {
                 self.agents = agents;
                 // Update selected agent index to match active agent
-                if let Some(idx) = self.agents.iter().position(|a| a.id == self.active_agent_id) {
+                if let Some(idx) = self
+                    .agents
+                    .iter()
+                    .position(|a| a.id == self.active_agent_id)
+                {
                     self.selected_agent = idx;
                 }
                 // Keep selection in bounds
@@ -1046,73 +1056,83 @@ impl Default for App {
 
 /// Format a tool summary from tool name and JSON args for display.
 fn format_tool_summary(tool_name: &str, args_json: &str) -> String {
-    // Try to parse args as JSON and extract relevant info
-    if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_json) {
-        match tool_name {
-            "cmd_run" => {
-                // Show the command being run
-                let program = args.get("program").and_then(|v| v.as_str()).unwrap_or("");
-                let cmd_args = args.get("args").and_then(|v| {
+    serde_json::from_str::<serde_json::Value>(args_json).map_or_else(
+        |_| {
+            if args_json.len() > 50 {
+                format!("{}...", &args_json[..47])
+            } else {
+                args_json.to_string()
+            }
+        },
+        |args| format_tool_summary_from_value(tool_name, &args),
+    )
+}
+
+/// Format a tool summary given parsed JSON args.
+fn format_tool_summary_from_value(tool_name: &str, args: &serde_json::Value) -> String {
+    match tool_name {
+        "cmd_run" => {
+            let program = args.get("program").and_then(|v| v.as_str()).unwrap_or("");
+            let cmd_args = args
+                .get("args")
+                .and_then(|v| {
                     v.as_array().map(|arr| {
                         arr.iter()
                             .filter_map(|a| a.as_str())
                             .collect::<Vec<_>>()
                             .join(" ")
                     })
-                }).unwrap_or_default();
-                if cmd_args.is_empty() {
-                    program.to_string()
-                } else {
-                    format!("{program} {cmd_args}")
-                }
-            }
-            "fs_read" | "file_read" => {
-                // Show the file path
-                args.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
-            "fs_write" | "file_write" => {
-                // Show the file path
-                args.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
-            "fs_list" | "list_dir" => {
-                // Show the directory path
-                args.get("path").and_then(|v| v.as_str()).unwrap_or(".").to_string()
-            }
-            "fs_search" | "search" | "glob" => {
-                // Show the pattern
-                args.get("pattern").and_then(|v| v.as_str()).unwrap_or("").to_string()
-            }
-            _ => {
-                // For other tools, show a compact summary of args
-                let summary: Vec<String> = args.as_object()
-                    .map(|obj| {
-                        obj.iter()
-                            .take(3) // Limit to first 3 args
-                            .filter_map(|(k, v)| {
-                                let val_str = match v {
-                                    serde_json::Value::String(s) => {
-                                        if s.len() > 30 {
-                                            format!("{}...", &s[..27])
-                                        } else {
-                                            s.clone()
-                                        }
-                                    }
-                                    _ => v.to_string(),
-                                };
-                                Some(format!("{k}={val_str}"))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                summary.join(", ")
+                })
+                .unwrap_or_default();
+            if cmd_args.is_empty() {
+                program.to_string()
+            } else {
+                format!("{program} {cmd_args}")
             }
         }
-    } else {
-        // If args isn't valid JSON, just show truncated raw args
-        if args_json.len() > 50 {
-            format!("{}...", &args_json[..47])
-        } else {
-            args_json.to_string()
+        "fs_read" | "file_read" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "fs_write" | "file_write" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "fs_list" | "list_dir" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".")
+            .to_string(),
+        "fs_search" | "search" | "glob" => args
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        _ => {
+            let summary: Vec<String> = args
+                .as_object()
+                .map(|obj| {
+                    obj.iter()
+                        .take(3)
+                        .map(|(k, v)| {
+                            let val_str = match v {
+                                serde_json::Value::String(s) => {
+                                    if s.len() > 30 {
+                                        format!("{}...", &s[..27])
+                                    } else {
+                                        s.clone()
+                                    }
+                                }
+                                _ => v.to_string(),
+                            };
+                            format!("{k}={val_str}")
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            summary.join(", ")
         }
     }
 }

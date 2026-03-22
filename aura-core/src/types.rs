@@ -59,7 +59,11 @@ pub struct Transaction {
     #[serde(with = "bytes_serde")]
     pub payload: Bytes,
     /// Optional reference to a related transaction (for callbacks from async processes)
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "option_hex_hash")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "option_hex_hash"
+    )]
     pub reference_tx_hash: Option<Hash>,
 }
 
@@ -121,8 +125,17 @@ impl Transaction {
 
     /// Create a user prompt transaction chained to a previous transaction.
     #[must_use]
-    pub fn user_prompt_chained(agent_id: AgentId, payload: impl Into<Bytes>, prev_hash: &Hash) -> Self {
-        Self::new_chained(agent_id, TransactionType::UserPrompt, payload, Some(prev_hash))
+    pub fn user_prompt_chained(
+        agent_id: AgentId,
+        payload: impl Into<Bytes>,
+        prev_hash: &Hash,
+    ) -> Self {
+        Self::new_chained(
+            agent_id,
+            TransactionType::UserPrompt,
+            payload,
+            Some(prev_hash),
+        )
     }
 
     /// Create an action result transaction.
@@ -158,7 +171,12 @@ impl Transaction {
     /// Create a session start transaction (context reset marker).
     #[must_use]
     pub fn session_start(agent_id: AgentId) -> Self {
-        Self::new_chained(agent_id, TransactionType::SessionStart, Bytes::from_static(b"session_start"), None)
+        Self::new_chained(
+            agent_id,
+            TransactionType::SessionStart,
+            Bytes::from_static(b"session_start"),
+            None,
+        )
     }
 
     /// Create a tool proposal transaction.
@@ -206,9 +224,9 @@ impl Transaction {
         }
     }
 
-    /// Get the transaction hash (legacy compatibility with tx_id).
+    /// Get the transaction hash (legacy compatibility with `tx_id`).
     #[must_use]
-    pub fn tx_id(&self) -> TxId {
+    pub const fn tx_id(&self) -> TxId {
         TxId::new(*self.hash.as_bytes())
     }
 }
@@ -237,7 +255,11 @@ pub struct ToolProposal {
 impl ToolProposal {
     /// Create a new tool proposal.
     #[must_use]
-    pub fn new(tool_use_id: impl Into<String>, tool: impl Into<String>, args: serde_json::Value) -> Self {
+    pub fn new(
+        tool_use_id: impl Into<String>,
+        tool: impl Into<String>,
+        args: serde_json::Value,
+    ) -> Self {
         Self {
             tool_use_id: tool_use_id.into(),
             tool: tool.into(),
@@ -325,13 +347,13 @@ impl ProcessPending {
     }
 }
 
-/// Payload for ActionResult transactions from completed async processes.
+/// Payload for `ActionResult` transactions from completed async processes.
 ///
 /// This is used when an async process completes and needs to be recorded
 /// as a continuation of the original transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionResultPayload {
-    /// The action_id this result continues
+    /// The `action_id` this result continues
     pub action_id: ActionId,
     /// Process identifier for correlation
     pub process_id: ProcessId,
@@ -1007,6 +1029,7 @@ mod option_hex_hash {
     use crate::ids::Hash;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    #[allow(clippy::ref_option)]
     pub fn serialize<S>(hash: &Option<Hash>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -1022,10 +1045,14 @@ mod option_hex_hash {
         D: Deserializer<'de>,
     {
         let opt: Option<String> = Option::deserialize(deserializer)?;
-        match opt {
-            Some(s) => Hash::from_hex(&s).map(Some).map_err(serde::de::Error::custom),
-            None => Ok(None),
-        }
+        opt.map_or_else(
+            || Ok(None),
+            |s| {
+                Hash::from_hex(&s)
+                    .map(Some)
+                    .map_err(serde::de::Error::custom)
+            },
+        )
     }
 }
 

@@ -45,7 +45,8 @@ pub use kernel::{Kernel, KernelConfig, ProcessResult};
 pub use policy::{default_tool_permission, PermissionLevel, Policy, PolicyConfig, PolicyResult};
 pub use process_manager::{ProcessManager, ProcessManagerConfig, ProcessOutput, RunningProcess};
 pub use turn_processor::{
-    ExecutedToolCall, StreamCallback, StreamCallbackEvent, TurnConfig, TurnEntry, TurnProcessor, TurnResult,
+    ExecutedToolCall, StepConfig, StepResult, StreamCallback, StreamCallbackEvent, ToolCache,
+    TurnConfig, TurnEntry, TurnProcessor, TurnResult,
 };
 
 // Re-export ToolResultContent for convenience

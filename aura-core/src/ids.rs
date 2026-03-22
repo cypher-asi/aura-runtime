@@ -30,9 +30,9 @@ impl Hash {
     }
 
     /// Create hash from content and previous transaction's hash.
-    /// Genesis transaction passes None for prev_hash.
+    /// Genesis transaction passes `None` for `prev_hash`.
     #[must_use]
-    pub fn from_content_chained(content: &[u8], prev_hash: Option<&Hash>) -> Self {
+    pub fn from_content_chained(content: &[u8], prev_hash: Option<&Self>) -> Self {
         let mut hasher = blake3::Hasher::new();
         hasher.update(content);
         if let Some(prev) = prev_hash {

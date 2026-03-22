@@ -73,15 +73,15 @@ impl ProposeRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aura_core::TransactionKind;
+    use aura_core::{Hash, TransactionType};
     use bytes::Bytes;
 
     fn create_test_tx(agent_id: AgentId) -> Transaction {
         Transaction::new(
-            aura_core::TxId::from_content(b"test"),
+            Hash::from_content(b"test"),
             agent_id,
             1000,
-            TransactionKind::UserPrompt,
+            TransactionType::UserPrompt,
             Bytes::from("test message"),
         )
     }
@@ -135,7 +135,7 @@ mod tests {
         let request = ProposeRequest::new(agent_id, tx.clone());
 
         assert_eq!(request.agent_id, agent_id);
-        assert_eq!(request.tx.tx_id, tx.tx_id);
+        assert_eq!(request.tx.tx_id(), tx.tx_id());
         assert!(request.record_window.is_empty());
         assert_eq!(request.limits.max_proposals, 8);
     }
@@ -160,8 +160,7 @@ mod tests {
             },
         ];
 
-        let request = ProposeRequest::new(agent_id, tx)
-            .with_record_window(window.clone());
+        let request = ProposeRequest::new(agent_id, tx).with_record_window(window.clone());
 
         assert_eq!(request.record_window.len(), 2);
         assert_eq!(request.record_window[0].seq, 1);
@@ -175,8 +174,7 @@ mod tests {
 
         let limits = ProposeLimits { max_proposals: 16 };
 
-        let request = ProposeRequest::new(agent_id, tx)
-            .with_limits(limits);
+        let request = ProposeRequest::new(agent_id, tx).with_limits(limits);
 
         assert_eq!(request.limits.max_proposals, 16);
     }
@@ -186,13 +184,12 @@ mod tests {
         let agent_id = AgentId::generate();
         let tx = create_test_tx(agent_id);
 
-        let request = ProposeRequest::new(agent_id, tx)
-            .with_record_window(vec![RecordSummary {
-                seq: 1,
-                tx_kind: "UserPrompt".to_string(),
-                action_kinds: vec![],
-                payload_summary: None,
-            }]);
+        let request = ProposeRequest::new(agent_id, tx).with_record_window(vec![RecordSummary {
+            seq: 1,
+            tx_kind: "UserPrompt".to_string(),
+            action_kinds: vec![],
+            payload_summary: None,
+        }]);
 
         let json = serde_json::to_string(&request).unwrap();
         let parsed: ProposeRequest = serde_json::from_str(&json).unwrap();

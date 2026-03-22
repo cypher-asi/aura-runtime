@@ -236,14 +236,16 @@ mod tests {
     #[test]
     fn test_storage_error() {
         let err = AuraError::storage("disk full");
-        assert!(matches!(err, AuraError::Storage { message, source: None } if message == "disk full"));
+        assert!(
+            matches!(err, AuraError::Storage { message, source: None } if message == "disk full")
+        );
     }
 
     #[test]
     fn test_storage_error_with_source() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err = AuraError::storage_with_source("read failed", io_err);
-        
+
         match err {
             AuraError::Storage { message, source } => {
                 assert_eq!(message, "read failed");
@@ -257,7 +259,7 @@ mod tests {
     fn test_agent_not_found() {
         let agent_id = AgentId::new([42u8; 32]);
         let err = AuraError::AgentNotFound { agent_id };
-        
+
         let display = err.to_string();
         assert!(display.contains("agent not found"));
     }
@@ -266,7 +268,7 @@ mod tests {
     fn test_record_entry_not_found() {
         let agent_id = AgentId::new([1u8; 32]);
         let err = AuraError::RecordEntryNotFound { agent_id, seq: 42 };
-        
+
         let display = err.to_string();
         assert!(display.contains("record entry not found"));
         assert!(display.contains("seq=42"));
@@ -274,8 +276,11 @@ mod tests {
 
     #[test]
     fn test_sequence_mismatch() {
-        let err = AuraError::SequenceMismatch { expected: 10, actual: 5 };
-        
+        let err = AuraError::SequenceMismatch {
+            expected: 10,
+            actual: 5,
+        };
+
         let display = err.to_string();
         assert!(display.contains("sequence mismatch"));
         assert!(display.contains("expected 10"));
@@ -285,19 +290,23 @@ mod tests {
     #[test]
     fn test_serialization_error() {
         let err = AuraError::serialization("invalid JSON");
-        assert!(matches!(err, AuraError::Serialization { message, source: None } if message == "invalid JSON"));
+        assert!(
+            matches!(err, AuraError::Serialization { message, source: None } if message == "invalid JSON")
+        );
     }
 
     #[test]
     fn test_deserialization_error() {
         let err = AuraError::deserialization("missing field");
-        assert!(matches!(err, AuraError::Deserialization { message, source: None } if message == "missing field"));
+        assert!(
+            matches!(err, AuraError::Deserialization { message, source: None } if message == "missing field")
+        );
     }
 
     #[test]
     fn test_policy_violation() {
         let err = AuraError::policy_violation("tool not allowed");
-        
+
         let display = err.to_string();
         assert!(display.contains("policy violation"));
         assert!(display.contains("tool not allowed"));
@@ -305,8 +314,10 @@ mod tests {
 
     #[test]
     fn test_tool_not_allowed() {
-        let err = AuraError::ToolNotAllowed { tool: "dangerous_tool".to_string() };
-        
+        let err = AuraError::ToolNotAllowed {
+            tool: "dangerous_tool".to_string(),
+        };
+
         let display = err.to_string();
         assert!(display.contains("tool not allowed"));
         assert!(display.contains("dangerous_tool"));
@@ -318,7 +329,7 @@ mod tests {
             tool: "fs_read".to_string(),
             reason: "permission denied".to_string(),
         };
-        
+
         let display = err.to_string();
         assert!(display.contains("tool execution failed"));
         assert!(display.contains("fs_read"));
@@ -331,7 +342,7 @@ mod tests {
             tool: "cmd_run".to_string(),
             timeout_ms: 30000,
         };
-        
+
         let display = err.to_string();
         assert!(display.contains("tool timeout"));
         assert!(display.contains("30000"));
@@ -339,8 +350,10 @@ mod tests {
 
     #[test]
     fn test_sandbox_violation() {
-        let err = AuraError::SandboxViolation { path: "../../../etc/passwd".to_string() };
-        
+        let err = AuraError::SandboxViolation {
+            path: "../../../etc/passwd".to_string(),
+        };
+
         let display = err.to_string();
         assert!(display.contains("sandbox violation"));
         assert!(display.contains("../../../etc/passwd"));
@@ -349,7 +362,7 @@ mod tests {
     #[test]
     fn test_reasoner_timeout() {
         let err = AuraError::ReasonerTimeout { timeout_ms: 60000 };
-        
+
         let display = err.to_string();
         assert!(display.contains("reasoner timeout"));
         assert!(display.contains("60000"));
@@ -357,8 +370,10 @@ mod tests {
 
     #[test]
     fn test_invalid_transaction() {
-        let err = AuraError::InvalidTransaction { reason: "empty payload".to_string() };
-        
+        let err = AuraError::InvalidTransaction {
+            reason: "empty payload".to_string(),
+        };
+
         let display = err.to_string();
         assert!(display.contains("invalid transaction"));
         assert!(display.contains("empty payload"));
@@ -371,7 +386,7 @@ mod tests {
             action_id,
             reason: "malformed payload".to_string(),
         };
-        
+
         let display = err.to_string();
         assert!(display.contains("invalid action"));
         assert!(display.contains("malformed payload"));
@@ -382,19 +397,37 @@ mod tests {
         // Create an invalid JSON to generate a serde_json error
         let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
         let aura_err: AuraError = json_err.into();
-        
+
         assert!(matches!(aura_err, AuraError::Serialization { .. }));
     }
 
     #[test]
     fn test_error_helper_functions() {
         // Test all helper functions create expected error types
-        assert!(matches!(AuraError::kernel("test"), AuraError::Kernel { .. }));
-        assert!(matches!(AuraError::executor("test"), AuraError::Executor { .. }));
-        assert!(matches!(AuraError::reasoner("test"), AuraError::Reasoner { .. }));
-        assert!(matches!(AuraError::validation("test"), AuraError::Validation { .. }));
-        assert!(matches!(AuraError::configuration("test"), AuraError::Configuration { .. }));
-        assert!(matches!(AuraError::internal("test"), AuraError::Internal { .. }));
+        assert!(matches!(
+            AuraError::kernel("test"),
+            AuraError::Kernel { .. }
+        ));
+        assert!(matches!(
+            AuraError::executor("test"),
+            AuraError::Executor { .. }
+        ));
+        assert!(matches!(
+            AuraError::reasoner("test"),
+            AuraError::Reasoner { .. }
+        ));
+        assert!(matches!(
+            AuraError::validation("test"),
+            AuraError::Validation { .. }
+        ));
+        assert!(matches!(
+            AuraError::configuration("test"),
+            AuraError::Configuration { .. }
+        ));
+        assert!(matches!(
+            AuraError::internal("test"),
+            AuraError::Internal { .. }
+        ));
     }
 
     #[test]
@@ -402,11 +435,11 @@ mod tests {
         fn returns_result() -> Result<i32> {
             Ok(42)
         }
-        
+
         fn returns_error() -> Result<i32> {
             Err(AuraError::internal("test"))
         }
-        
+
         assert_eq!(returns_result().unwrap(), 42);
         assert!(returns_error().is_err());
     }

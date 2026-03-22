@@ -48,6 +48,7 @@ pub enum UiEvent {
 
 /// Commands sent from the application logic to the UI.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum UiCommand {
     /// Set the status message
     SetStatus(String),

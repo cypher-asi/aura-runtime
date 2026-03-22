@@ -139,7 +139,10 @@ mod tests {
     #[test]
     fn test_workspaces_path() {
         let config = SwarmConfig::default();
-        assert_eq!(config.workspaces_path(), PathBuf::from("./aura_data/workspaces"));
+        assert_eq!(
+            config.workspaces_path(),
+            PathBuf::from("./aura_data/workspaces")
+        );
     }
 
     #[test]
@@ -148,7 +151,10 @@ mod tests {
         config.data_dir = PathBuf::from("/custom/path");
 
         assert_eq!(config.db_path(), PathBuf::from("/custom/path/db"));
-        assert_eq!(config.workspaces_path(), PathBuf::from("/custom/path/workspaces"));
+        assert_eq!(
+            config.workspaces_path(),
+            PathBuf::from("/custom/path/workspaces")
+        );
     }
 
     #[test]

@@ -234,7 +234,11 @@ mod tests {
 
         #[async_trait::async_trait]
         impl Executor for FirstExecutor {
-            async fn execute(&self, _ctx: &ExecuteContext, action: &Action) -> anyhow::Result<Effect> {
+            async fn execute(
+                &self,
+                _ctx: &ExecuteContext,
+                action: &Action,
+            ) -> anyhow::Result<Effect> {
                 Ok(Effect::committed_agreement(action.action_id, "first"))
             }
             fn can_handle(&self, action: &Action) -> bool {
@@ -247,7 +251,11 @@ mod tests {
 
         #[async_trait::async_trait]
         impl Executor for SecondExecutor {
-            async fn execute(&self, _ctx: &ExecuteContext, action: &Action) -> anyhow::Result<Effect> {
+            async fn execute(
+                &self,
+                _ctx: &ExecuteContext,
+                action: &Action,
+            ) -> anyhow::Result<Effect> {
                 Ok(Effect::committed_agreement(action.action_id, "second"))
             }
             fn can_handle(&self, action: &Action) -> bool {
@@ -277,9 +285,8 @@ mod tests {
     async fn test_router_with_executors_constructor() {
         use crate::NoOpExecutor;
 
-        let router = ExecutorRouter::with_executors(vec![
-            Arc::new(NoOpExecutor) as Arc<dyn Executor>,
-        ]);
+        let router =
+            ExecutorRouter::with_executors(vec![Arc::new(NoOpExecutor) as Arc<dyn Executor>]);
 
         let ctx = ExecuteContext::new(
             AgentId::generate(),
@@ -320,7 +327,7 @@ mod tests {
             ActionId::generate(),
             PathBuf::from("/tmp"),
         );
-        
+
         let action_id = ActionId::generate();
         let action = Action::new(action_id, ActionKind::Delegate, Bytes::new());
 

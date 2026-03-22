@@ -58,21 +58,21 @@ pub fn cyber_theme() -> Theme {
         name: "cyber".to_string(),
         colors: ThemeColors {
             // Base colors
-            background: BLACK,   // #0d0d0d - deep black
-            foreground: WHITE,   // #ffffff - white text
+            background: BLACK, // #0d0d0d - deep black
+            foreground: WHITE, // #ffffff - white text
 
             // Accent colors
-            primary: CYAN,       // #01f4cb - cyan (primary accent)
-            secondary: PURPLE,   // #cb01f4 - purple (secondary accent)
+            primary: CYAN,     // #01f4cb - cyan (primary accent)
+            secondary: PURPLE, // #cb01f4 - purple (secondary accent)
 
             // Semantic colors
-            success: CYAN,       // #01f4cb - cyan/green (success)
-            warning: BLUE,       // #01a4f4 - blue (info/warning)
-            error: RED,          // #f4012a - red (errors/danger)
-            pending: PURPLE,     // #cb01f4 - purple (pending states)
+            success: CYAN,   // #01f4cb - cyan/green (success)
+            warning: BLUE,   // #01a4f4 - blue (info/warning)
+            error: RED,      // #f4012a - red (errors/danger)
+            pending: PURPLE, // #cb01f4 - purple (pending states)
 
             // Muted text
-            muted: GRAY,         // #888888 - gray
+            muted: GRAY, // #888888 - gray
         },
         border_style: BorderStyle::Rounded,
         show_icons: true,

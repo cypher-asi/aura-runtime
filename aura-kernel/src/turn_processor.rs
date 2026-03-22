@@ -23,18 +23,18 @@
 
 use crate::policy::{PermissionLevel, Policy, PolicyConfig};
 use aura_core::{
-    Action, AgentId, Decision, Effect, EffectKind, EffectStatus, ProposalSet,
-    RecordEntry, ToolCall, ToolResult, Transaction,
+    Action, AgentId, Decision, Effect, EffectKind, EffectStatus, ProposalSet, RecordEntry,
+    ToolCall, ToolResult, Transaction,
 };
 use aura_executor::{ExecuteContext, ExecutorRouter};
 use aura_reasoner::{
     ContentBlock, Message, ModelProvider, ModelRequest, ModelResponse, StopReason,
     StreamAccumulator, StreamEvent, ToolDefinition, ToolResultContent,
 };
-use futures_util::StreamExt;
 use aura_store::Store;
 use aura_tools::ToolRegistry;
 use bytes::Bytes;
+use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,7 +46,7 @@ use tracing::{debug, error, info, instrument, warn};
 /// Keyed by `"tool_name\0canonical_args_json"`. Only populated for
 /// read-only tools (`fs_ls`, `fs_read`, `fs_stat`, `fs_find`, `search_code`)
 /// to avoid suppressing side-effectful calls.
-type ToolCache = HashMap<String, ExecutedToolCall>;
+pub type ToolCache = HashMap<String, ExecutedToolCall>;
 
 /// Tools whose results are safe to cache (no side effects).
 const CACHEABLE_TOOLS: &[&str] = &["fs_ls", "fs_read", "fs_stat", "fs_find", "search_code"];
@@ -112,6 +112,33 @@ impl Default for TurnConfig {
             context_target_ratio: 0.80,
         }
     }
+}
+
+/// Per-step configuration overrides.
+///
+/// Enables the caller (e.g., `AgentLoop`) to adjust behavior on a per-step
+/// basis — for example, tapering the thinking budget after early iterations.
+#[derive(Debug, Clone, Default)]
+pub struct StepConfig {
+    /// Override the thinking budget for this step.
+    pub thinking_budget: Option<u32>,
+    /// Override the model for this step.
+    pub model_override: Option<String>,
+    /// Override the maximum tool calls for this step.
+    pub max_tool_calls: Option<u32>,
+}
+
+/// Result of processing a single step (one model call + tool execution).
+#[derive(Debug)]
+pub struct StepResult {
+    /// The model's response for this step.
+    pub response: ModelResponse,
+    /// Tool calls that were executed during this step.
+    pub executed_tools: Vec<ExecutedToolCall>,
+    /// Why the model stopped generating.
+    pub stop_reason: StopReason,
+    /// Whether any tool executions failed.
+    pub had_failures: bool,
 }
 
 /// Default system prompt for the agent.
@@ -383,7 +410,7 @@ where
     fn is_cancelled(&self) -> bool {
         self.cancellation_token
             .as_ref()
-            .map_or(false, CancellationToken::is_cancelled)
+            .is_some_and(CancellationToken::is_cancelled)
     }
 
     /// Get the workspace path for an agent.
@@ -401,13 +428,20 @@ where
     /// Loads up to `context_window` previous entries and converts them to messages,
     /// then appends the current user prompt. Stops at any `SessionStart` transaction
     /// to respect context boundaries.
-    fn build_initial_messages(&self, agent_id: AgentId, tx: &Transaction, current_seq: u64) -> Vec<Message> {
+    fn build_initial_messages(
+        &self,
+        agent_id: AgentId,
+        tx: &Transaction,
+        current_seq: u64,
+    ) -> Vec<Message> {
         let mut messages = Vec::new();
 
         // Load conversation history from store
         if current_seq > 1 && self.config.context_window > 0 {
             // Calculate how far back to scan (at most context_window entries, starting from seq 1)
-            let start_seq = current_seq.saturating_sub(self.config.context_window as u64).max(1);
+            let start_seq = current_seq
+                .saturating_sub(self.config.context_window as u64)
+                .max(1);
             let limit = self.config.context_window;
 
             debug!(
@@ -427,7 +461,10 @@ where
                 let relevant_entries = session_start_idx.map_or_else(
                     || &entries[..],
                     |idx| {
-                        debug!(session_start_seq = entries[idx].seq, "Found session boundary");
+                        debug!(
+                            session_start_seq = entries[idx].seq,
+                            "Found session boundary"
+                        );
                         &entries[idx + 1..]
                     },
                 );
@@ -496,8 +533,13 @@ where
     /// tool-result messages — are dropped and replaced with a single
     /// "[truncated]" placeholder so the model knows context was trimmed.
     fn truncate_messages_if_needed(messages: &mut Vec<Message>, config: &TurnConfig) {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let budget_chars = (config.context_window_tokens as f64
-            * config.context_target_ratio as f64
+            * f64::from(config.context_target_ratio)
             * CHARS_PER_TOKEN as f64) as usize;
 
         let total_chars = Self::estimate_message_chars(messages);
@@ -581,6 +623,97 @@ where
         self.run_turn_loop(messages, agent_id).await
     }
 
+    /// Process a single step: one model call, optional tool execution, and result.
+    ///
+    /// This is the atomic unit of the agentic loop. The caller is responsible for:
+    /// - Managing the message history
+    /// - Deciding whether to continue looping
+    /// - Context truncation/compaction
+    /// - Token budget tracking
+    ///
+    /// # Errors
+    ///
+    /// Returns error if model completion or tool execution fails.
+    pub async fn process_step(
+        &self,
+        messages: &[Message],
+        agent_id: AgentId,
+        tool_cache: &mut ToolCache,
+        step_config: &StepConfig,
+    ) -> anyhow::Result<StepResult> {
+        let tools = self.build_tools();
+        let model = step_config
+            .model_override
+            .as_deref()
+            .unwrap_or(&self.config.model);
+
+        let request = ModelRequest::builder(model, &self.config.system_prompt)
+            .messages(messages.to_vec())
+            .tools(tools)
+            .max_tokens(self.config.max_tokens)
+            .temperature(self.config.temperature.unwrap_or(0.2))
+            .build();
+
+        let response = if self.config.replay_mode {
+            debug!("Replay mode: skipping model call");
+            ModelResponse::new(
+                StopReason::EndTurn,
+                Message::assistant("(replay)"),
+                aura_reasoner::Usage::default(),
+                aura_reasoner::ProviderTrace::new("replay", 0),
+            )
+        } else if self.stream_callback.is_some() {
+            self.complete_with_streaming(request).await?
+        } else {
+            self.provider.complete(request).await?
+        };
+
+        debug!(
+            stop_reason = ?response.stop_reason,
+            input_tokens = response.usage.input_tokens,
+            output_tokens = response.usage.output_tokens,
+            "Received model response"
+        );
+
+        match response.stop_reason {
+            StopReason::ToolUse => {
+                let executed_tools = self
+                    .execute_tool_calls(&response.message, agent_id, tool_cache)
+                    .await?;
+
+                let had_failures = executed_tools.iter().any(|t| t.is_error);
+
+                for tool in &executed_tools {
+                    let result_text = match &tool.result {
+                        ToolResultContent::Text(s) => s.clone(),
+                        ToolResultContent::Json(v) => serde_json::to_string(v).unwrap_or_default(),
+                    };
+                    self.emit_stream_event(StreamCallbackEvent::ToolComplete {
+                        name: tool.tool_name.clone(),
+                        args: tool.tool_args.clone(),
+                        result: result_text,
+                        is_error: tool.is_error,
+                    });
+                }
+
+                Ok(StepResult {
+                    response,
+                    executed_tools,
+                    stop_reason: StopReason::ToolUse,
+                    had_failures,
+                })
+            }
+            stop_reason @ (StopReason::EndTurn
+            | StopReason::MaxTokens
+            | StopReason::StopSequence) => Ok(StepResult {
+                response,
+                executed_tools: vec![],
+                stop_reason,
+                had_failures: false,
+            }),
+        }
+    }
+
     /// Core agentic turn loop shared by both `process_turn` and
     /// `process_turn_with_messages`.
     #[allow(clippy::too_many_lines)]
@@ -589,8 +722,6 @@ where
         mut messages: Vec<Message>,
         agent_id: AgentId,
     ) -> anyhow::Result<TurnResult> {
-        let tools = self.build_tools();
-
         let mut entries = Vec::new();
         let mut total_input_tokens = 0u32;
         let mut total_output_tokens = 0u32;
@@ -610,54 +741,28 @@ where
 
             debug!(step = step, messages = messages.len(), "Processing step");
 
-            // 0. Truncate if context is getting too large
             Self::truncate_messages_if_needed(&mut messages, &self.config);
 
-            // 1. Build model request
-            let request = ModelRequest::builder(&self.config.model, &self.config.system_prompt)
-                .messages(messages.clone())
-                .tools(tools.clone())
-                .max_tokens(self.config.max_tokens)
-                .temperature(self.config.temperature.unwrap_or(0.2))
-                .build();
+            let step_result = self
+                .process_step(&messages, agent_id, &mut tool_cache, &StepConfig::default())
+                .await?;
 
-            // 2. Call model (skip in replay mode)
-            let response = if self.config.replay_mode {
-                debug!("Replay mode: skipping model call");
-                ModelResponse::new(
-                    StopReason::EndTurn,
-                    Message::assistant("(replay)"),
-                    aura_reasoner::Usage::default(),
-                    aura_reasoner::ProviderTrace::new("replay", 0),
-                )
-            } else if self.stream_callback.is_some() {
-                self.complete_with_streaming(request).await?
-            } else {
-                self.provider.complete(request).await?
-            };
+            total_input_tokens += step_result.response.usage.input_tokens;
+            total_output_tokens += step_result.response.usage.output_tokens;
 
-            // Track usage
-            total_input_tokens += response.usage.input_tokens;
-            total_output_tokens += response.usage.output_tokens;
+            messages.push(step_result.response.message.clone());
+            final_message = Some(step_result.response.message.clone());
 
-            debug!(
-                stop_reason = ?response.stop_reason,
-                input_tokens = response.usage.input_tokens,
-                output_tokens = response.usage.output_tokens,
-                "Received model response"
-            );
+            if step_result.had_failures {
+                had_failures = true;
+            }
 
-            // 3. Add assistant message to conversation
-            messages.push(response.message.clone());
-            final_message = Some(response.message.clone());
-
-            // 4. Check stop reason and handle accordingly
-            match response.stop_reason {
+            match step_result.stop_reason {
                 StopReason::EndTurn => {
                     info!(step = step, "Turn completed (end_turn)");
                     entries.push(TurnEntry {
                         turn_step: step,
-                        model_response: response,
+                        model_response: step_result.response,
                         tool_results: vec![],
                         executed_tools: vec![],
                         stop_reason: StopReason::EndTurn,
@@ -665,35 +770,17 @@ where
                     break;
                 }
                 StopReason::ToolUse => {
-                    let executed_tools = self.execute_tool_calls(&response.message, agent_id, &mut tool_cache).await?;
-
-                    if executed_tools.iter().any(|t| t.is_error) {
-                        had_failures = true;
-                    }
-
-                    for tool in &executed_tools {
-                        let result_text = match &tool.result {
-                            ToolResultContent::Text(s) => s.clone(),
-                            ToolResultContent::Json(v) => serde_json::to_string(v).unwrap_or_default(),
-                        };
-                        self.emit_stream_event(StreamCallbackEvent::ToolComplete {
-                            name: tool.tool_name.clone(),
-                            args: tool.tool_args.clone(),
-                            result: result_text,
-                            is_error: tool.is_error,
-                        });
-                    }
-
-                    let tool_results: Vec<(String, ToolResultContent, bool)> = executed_tools
+                    let tool_results: Vec<(String, ToolResultContent, bool)> = step_result
+                        .executed_tools
                         .iter()
                         .map(|t| (t.tool_use_id.clone(), t.result.clone(), t.is_error))
                         .collect();
 
                     entries.push(TurnEntry {
                         turn_step: step,
-                        model_response: response,
+                        model_response: step_result.response,
                         tool_results: tool_results.clone(),
-                        executed_tools,
+                        executed_tools: step_result.executed_tools,
                         stop_reason: StopReason::ToolUse,
                     });
 
@@ -705,7 +792,7 @@ where
                     warn!(step = step, "Turn stopped due to max_tokens");
                     entries.push(TurnEntry {
                         turn_step: step,
-                        model_response: response,
+                        model_response: step_result.response,
                         tool_results: vec![],
                         executed_tools: vec![],
                         stop_reason: StopReason::MaxTokens,
@@ -716,7 +803,7 @@ where
                     debug!(step = step, "Turn stopped at stop sequence");
                     entries.push(TurnEntry {
                         turn_step: step,
-                        model_response: response,
+                        model_response: step_result.response,
                         tool_results: vec![],
                         executed_tools: vec![],
                         stop_reason: StopReason::StopSequence,
@@ -750,7 +837,11 @@ where
     }
 
     /// Complete a model request with streaming, emitting events to the callback.
-    async fn complete_with_streaming(&self, request: ModelRequest) -> anyhow::Result<ModelResponse> {
+    #[allow(clippy::too_many_lines)]
+    async fn complete_with_streaming(
+        &self,
+        request: ModelRequest,
+    ) -> anyhow::Result<ModelResponse> {
         let start = std::time::Instant::now();
 
         let mut stream = match self.provider.complete_streaming(request).await {
@@ -823,7 +914,9 @@ where
                             }
                         }
                         StreamEvent::ThinkingDelta { thinking } => {
-                            self.emit_stream_event(StreamCallbackEvent::ThinkingDelta(thinking.clone()));
+                            self.emit_stream_event(StreamCallbackEvent::ThinkingDelta(
+                                thinking.clone(),
+                            ));
                         }
                         StreamEvent::TextDelta { text } => {
                             self.emit_stream_event(StreamCallbackEvent::TextDelta(text.clone()));
@@ -877,6 +970,7 @@ where
     /// re-execution. Permitted tools are then executed in parallel via
     /// `futures::future::join_all`. Successful cacheable results are stored
     /// back into the cache for future steps within the same turn.
+    #[allow(clippy::too_many_lines)]
     async fn execute_tool_calls(
         &self,
         message: &Message,
@@ -907,9 +1001,11 @@ where
                             tool_use_id: id.clone(),
                             tool_name: name.clone(),
                             tool_args: input.clone(),
-                            result: ToolResultContent::text(format!("Tool '{name}' is not allowed")),
+                            result: ToolResultContent::text(format!(
+                                "Tool '{name}' is not allowed"
+                            )),
                             is_error: true,
-                            metadata: Default::default(),
+                            metadata: HashMap::default(),
                         });
                         continue;
                     }
@@ -930,7 +1026,7 @@ where
                     if let Some(hit) = tool_cache.get(&cache_key) {
                         debug!(tool = %name, "Cache hit — returning cached result");
                         let mut cloned = hit.clone();
-                        cloned.tool_use_id = id.clone();
+                        cloned.tool_use_id.clone_from(id);
                         cached.push(cloned);
                         continue;
                     }
@@ -978,7 +1074,7 @@ where
                                 tool_args: input,
                                 result: ToolResultContent::text("Tool executed successfully"),
                                 is_error: false,
-                                metadata: Default::default(),
+                                metadata: HashMap::default(),
                             }
                         }
                     } else {
@@ -995,7 +1091,7 @@ where
                             tool_args: input,
                             result: ToolResultContent::text(error_msg),
                             is_error: true,
-                            metadata: Default::default(),
+                            metadata: HashMap::default(),
                         }
                     }
                 }
@@ -1106,8 +1202,11 @@ fn classify_llm_error(message: &str) -> (&'static str, bool) {
     if lower.contains("rate limit") || lower.contains("429") || lower.contains("too many requests")
     {
         ("rate_limit", true)
-    } else if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized")
-        || lower.contains("forbidden") || lower.contains("authentication")
+    } else if lower.contains("401")
+        || lower.contains("403")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+        || lower.contains("authentication")
     {
         ("auth_error", false)
     } else if lower.contains("overloaded") || lower.contains("529") || lower.contains("503") {
@@ -1226,5 +1325,126 @@ mod tests {
 
         // Should stop at max_steps
         assert_eq!(result.steps, 3);
+    }
+
+    #[tokio::test]
+    async fn test_process_step_returns_end_turn() {
+        let (processor, _db_dir, _ws_dir) = create_test_processor();
+
+        let messages = vec![Message::user("Hello")];
+        let agent_id = AgentId::generate();
+        let mut tool_cache: ToolCache = HashMap::new();
+
+        let result = processor
+            .process_step(&messages, agent_id, &mut tool_cache, &StepConfig::default())
+            .await
+            .unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::EndTurn);
+        assert!(result.executed_tools.is_empty());
+        assert!(!result.had_failures);
+    }
+
+    #[tokio::test]
+    async fn test_process_step_returns_tool_use() {
+        let db_dir = TempDir::new().unwrap();
+        let ws_dir = TempDir::new().unwrap();
+
+        let provider = Arc::new(MockProvider::new().with_response(MockResponse::tool_use(
+            "tool_1",
+            "fs_ls",
+            serde_json::json!({ "path": "." }),
+        )));
+
+        let store = Arc::new(RocksStore::open(db_dir.path(), false).unwrap());
+        let executor = ExecutorRouter::new();
+        let tool_registry = Arc::new(DefaultToolRegistry::new());
+
+        let config = TurnConfig {
+            workspace_base: ws_dir.path().to_path_buf(),
+            ..TurnConfig::default()
+        };
+
+        let processor = TurnProcessor::new(provider, store, executor, tool_registry, config);
+
+        let messages = vec![Message::user("List files")];
+        let agent_id = AgentId::generate();
+        let mut tool_cache: ToolCache = HashMap::new();
+
+        let result = processor
+            .process_step(&messages, agent_id, &mut tool_cache, &StepConfig::default())
+            .await
+            .unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::ToolUse);
+        assert!(!result.executed_tools.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_process_step_respects_model_override() {
+        let (processor, _db_dir, _ws_dir) = create_test_processor();
+
+        let messages = vec![Message::user("Hello")];
+        let agent_id = AgentId::generate();
+        let mut tool_cache: ToolCache = HashMap::new();
+
+        let step_config = StepConfig {
+            model_override: Some("override-model".to_string()),
+            ..StepConfig::default()
+        };
+
+        let result = processor
+            .process_step(&messages, agent_id, &mut tool_cache, &step_config)
+            .await
+            .unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::EndTurn);
+        assert!(!result.had_failures);
+    }
+
+    #[tokio::test]
+    async fn test_run_turn_loop_backward_compat() {
+        let db_dir = TempDir::new().unwrap();
+        let ws_dir = TempDir::new().unwrap();
+
+        let provider = Arc::new(
+            MockProvider::new()
+                .with_response(MockResponse::text("Hello from store!"))
+                .with_response(MockResponse::text("Hello from messages!")),
+        );
+
+        let store = Arc::new(RocksStore::open(db_dir.path(), false).unwrap());
+        let executor = ExecutorRouter::new();
+        let tool_registry = Arc::new(DefaultToolRegistry::new());
+
+        let config = TurnConfig {
+            workspace_base: ws_dir.path().to_path_buf(),
+            ..TurnConfig::default()
+        };
+
+        let processor = TurnProcessor::new(provider, store, executor, tool_registry, config);
+
+        let agent_id = AgentId::generate();
+        let tx = Transaction::user_prompt(agent_id, "Hello");
+        let result_store = processor.process_turn(tx.agent_id, tx, 1).await.unwrap();
+
+        let messages = vec![Message::user("Hello".to_string())];
+        let result_msgs = processor
+            .process_turn_with_messages(agent_id, messages)
+            .await
+            .unwrap();
+
+        assert_eq!(result_store.steps, result_msgs.steps);
+        assert_eq!(result_store.steps, 1);
+        assert!(!result_store.had_failures);
+        assert!(!result_msgs.had_failures);
+    }
+
+    #[test]
+    fn test_step_config_default() {
+        let config = StepConfig::default();
+        assert!(config.thinking_budget.is_none());
+        assert!(config.model_override.is_none());
+        assert!(config.max_tool_calls.is_none());
     }
 }

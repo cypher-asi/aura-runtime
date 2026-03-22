@@ -74,10 +74,10 @@ mod tests {
         let limits = ExecuteLimits::default();
 
         assert_eq!(limits.read_bytes, 5 * 1024 * 1024); // 5MB
-        assert_eq!(limits.write_bytes, 1024 * 1024);    // 1MB
+        assert_eq!(limits.write_bytes, 1024 * 1024); // 1MB
         assert_eq!(limits.command_timeout, Duration::from_secs(10));
-        assert_eq!(limits.stdout_bytes, 256 * 1024);    // 256KB
-        assert_eq!(limits.stderr_bytes, 256 * 1024);    // 256KB
+        assert_eq!(limits.stdout_bytes, 256 * 1024); // 256KB
+        assert_eq!(limits.stderr_bytes, 256 * 1024); // 256KB
     }
 
     #[test]
@@ -109,8 +109,8 @@ mod tests {
             stderr_bytes: 100,
         };
 
-        let ctx = ExecuteContext::new(agent_id, action_id, workspace)
-            .with_limits(custom_limits.clone());
+        let ctx =
+            ExecuteContext::new(agent_id, action_id, workspace).with_limits(custom_limits.clone());
 
         assert_eq!(ctx.limits.read_bytes, 1024);
         assert_eq!(ctx.limits.write_bytes, 512);

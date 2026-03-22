@@ -37,8 +37,8 @@ pub use types::{
     ToolResultContent, Usage,
 };
 
-use std::pin::Pin;
 use futures_util::Stream;
+use std::pin::Pin;
 
 use async_trait::async_trait;
 use aura_core::ProposalSet;
@@ -120,11 +120,7 @@ pub trait ModelProvider: Send + Sync {
         // Convert response to stream events
         let events = vec![
             Ok(StreamEvent::MessageStart {
-                message_id: response
-                    .trace
-                    .request_id
-                    .clone()
-                    .unwrap_or_default(),
+                message_id: response.trace.request_id.clone().unwrap_or_default(),
                 model: response.trace.model.clone(),
             }),
             Ok(StreamEvent::ContentBlockStart {

@@ -254,7 +254,11 @@ impl ModelProvider for AnthropicProvider {
             tool_choice: convert_tool_choice(&request.tool_choice),
             max_tokens: request.max_tokens,
             // Temperature must be 1 when using extended thinking
-            temperature: if thinking.is_some() { Some(1.0) } else { request.temperature },
+            temperature: if thinking.is_some() {
+                Some(1.0)
+            } else {
+                request.temperature
+            },
             stream: true,
             thinking,
         };
@@ -580,7 +584,7 @@ impl<S> SseStream<S> {
 
         let event_end = event_end?;
         let event_str = self.buffer[..event_end].to_string();
-        
+
         // Remove the event from buffer (including the delimiter)
         let delimiter_len = if self.buffer[event_end..].starts_with("\r\n\r\n") {
             4
@@ -693,15 +697,13 @@ fn convert_messages_to_api(messages: &[Message]) -> Vec<ApiMessage> {
             let content: Vec<ApiContent> = msg
                 .content
                 .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::Text { text } => {
-                        Some(ApiContent::Text { text: text.clone() })
-                    }
-                    ContentBlock::ToolUse { id, name, input } => Some(ApiContent::ToolUse {
+                .map(|block| match block {
+                    ContentBlock::Text { text } => ApiContent::Text { text: text.clone() },
+                    ContentBlock::ToolUse { id, name, input } => ApiContent::ToolUse {
                         id: id.clone(),
                         name: name.clone(),
                         input: input.clone(),
-                    }),
+                    },
                     ContentBlock::ToolResult {
                         tool_use_id,
                         content,
@@ -713,20 +715,21 @@ fn convert_messages_to_api(messages: &[Message]) -> Vec<ApiMessage> {
                                 serde_json::to_string(v).unwrap_or_default()
                             }
                         };
-                        Some(ApiContent::ToolResult {
+                        ApiContent::ToolResult {
                             tool_use_id: tool_use_id.clone(),
                             content: content_text,
                             is_error: Some(*is_error),
-                        })
+                        }
                     }
                     // Thinking blocks MUST be echoed back to the API in multi-turn conversations
                     // when extended thinking is enabled. Include the signature if available.
-                    ContentBlock::Thinking { thinking, signature } => {
-                        Some(ApiContent::Thinking {
-                            thinking: thinking.clone(),
-                            signature: signature.clone(),
-                        })
-                    }
+                    ContentBlock::Thinking {
+                        thinking,
+                        signature,
+                    } => ApiContent::Thinking {
+                        thinking: thinking.clone(),
+                        signature: signature.clone(),
+                    },
                 })
                 .collect();
 
@@ -763,7 +766,10 @@ fn convert_response_to_aura(content: &[ApiContent]) -> Message {
         .iter()
         .map(|c| match c {
             ApiContent::Text { text } => ContentBlock::Text { text: text.clone() },
-            ApiContent::Thinking { thinking, signature } => ContentBlock::Thinking {
+            ApiContent::Thinking {
+                thinking,
+                signature,
+            } => ContentBlock::Thinking {
                 thinking: thinking.clone(),
                 signature: signature.clone(),
             },

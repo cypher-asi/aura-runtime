@@ -3,8 +3,8 @@
 //! Tests the full async process flow including pending effects and completion transactions.
 
 use aura_core::{
-    ActionId, ActionResultPayload, AgentId, Hash, ProcessId, ProcessPending,
-    Transaction, TransactionType,
+    ActionId, ActionResultPayload, AgentId, Hash, ProcessId, ProcessPending, Transaction,
+    TransactionType,
 };
 use aura_kernel::ProcessManager;
 use aura_tools::{cmd_run_with_threshold, Sandbox, ThresholdResult};

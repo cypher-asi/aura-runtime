@@ -674,24 +674,22 @@ impl StreamAccumulator {
                 self.message_id.clone_from(message_id);
                 self.model.clone_from(model);
             }
-            StreamEvent::ContentBlockStart { content_type, .. } => {
-                match content_type {
-                    StreamContentType::ToolUse { id, name } => {
-                        self.current_tool_use = Some(AccumulatedToolUse {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input_json: String::new(),
-                        });
-                        self.in_thinking_block = false;
-                    }
-                    StreamContentType::Thinking => {
-                        self.in_thinking_block = true;
-                    }
-                    StreamContentType::Text => {
-                        self.in_thinking_block = false;
-                    }
+            StreamEvent::ContentBlockStart { content_type, .. } => match content_type {
+                StreamContentType::ToolUse { id, name } => {
+                    self.current_tool_use = Some(AccumulatedToolUse {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input_json: String::new(),
+                    });
+                    self.in_thinking_block = false;
                 }
-            }
+                StreamContentType::Thinking => {
+                    self.in_thinking_block = true;
+                }
+                StreamContentType::Text => {
+                    self.in_thinking_block = false;
+                }
+            },
             StreamEvent::TextDelta { text } => {
                 self.text_content.push_str(text);
             }
@@ -733,7 +731,11 @@ impl StreamAccumulator {
     /// # Errors
     ///
     /// Returns error if tool use JSON is invalid.
-    pub fn into_response(self, input_tokens: u32, latency_ms: u64) -> anyhow::Result<ModelResponse> {
+    pub fn into_response(
+        self,
+        input_tokens: u32,
+        latency_ms: u64,
+    ) -> anyhow::Result<ModelResponse> {
         let mut content_blocks = Vec::new();
 
         // Add thinking content first if present (it comes before text in the response)
@@ -889,10 +891,7 @@ mod tests {
     fn test_message_text_content_concatenation() {
         let msg = Message::new(
             Role::Assistant,
-            vec![
-                ContentBlock::text("Hello "),
-                ContentBlock::text("world!"),
-            ],
+            vec![ContentBlock::text("Hello "), ContentBlock::text("world!")],
         );
 
         assert_eq!(msg.text_content(), "Hello world!");
@@ -920,14 +919,15 @@ mod tests {
 
     #[test]
     fn test_content_block_tool_result() {
-        let result = ContentBlock::tool_result(
-            "tool123",
-            ToolResultContent::text("success"),
-            false,
-        );
+        let result =
+            ContentBlock::tool_result("tool123", ToolResultContent::text("success"), false);
 
         match result {
-            ContentBlock::ToolResult { tool_use_id, content, is_error } => {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
                 assert_eq!(tool_use_id, "tool123");
                 assert!(!is_error);
                 if let ToolResultContent::Text(t) = content {
@@ -1091,8 +1091,12 @@ mod tests {
             index: 0,
             content_type: StreamContentType::Text,
         });
-        acc.process(&StreamEvent::TextDelta { text: "Hello ".to_string() });
-        acc.process(&StreamEvent::TextDelta { text: "world!".to_string() });
+        acc.process(&StreamEvent::TextDelta {
+            text: "Hello ".to_string(),
+        });
+        acc.process(&StreamEvent::TextDelta {
+            text: "world!".to_string(),
+        });
         acc.process(&StreamEvent::ContentBlockStop { index: 0 });
         acc.process(&StreamEvent::MessageDelta {
             stop_reason: Some(StopReason::EndTurn),
@@ -1250,8 +1254,14 @@ mod tests {
 
         // Thinking should come before text in content blocks
         assert_eq!(response.message.content.len(), 2);
-        assert!(matches!(&response.message.content[0], ContentBlock::Thinking { .. }));
-        assert!(matches!(&response.message.content[1], ContentBlock::Text { .. }));
+        assert!(matches!(
+            &response.message.content[0],
+            ContentBlock::Thinking { .. }
+        ));
+        assert!(matches!(
+            &response.message.content[1],
+            ContentBlock::Text { .. }
+        ));
     }
 
     #[test]
@@ -1269,7 +1279,7 @@ mod tests {
 
         assert_eq!(response.stop_reason, StopReason::ToolUse);
         assert!(response.message.has_tool_use());
-        
+
         if let ContentBlock::ToolUse { id, name, input } = &response.message.content[0] {
             assert_eq!(id, "tool1");
             assert_eq!(name, "fs_read");
@@ -1375,8 +1385,7 @@ mod tests {
 
     #[test]
     fn test_provider_trace() {
-        let trace = ProviderTrace::new("claude", 500)
-            .with_request_id("req123");
+        let trace = ProviderTrace::new("claude", 500).with_request_id("req123");
 
         assert_eq!(trace.model, "claude");
         assert_eq!(trace.latency_ms, 500);

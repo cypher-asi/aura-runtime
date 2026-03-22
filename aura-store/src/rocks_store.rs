@@ -321,7 +321,7 @@ impl Store for RocksStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aura_core::{Decision, ProposalSet, TransactionKind};
+    use aura_core::{Decision, Hash, ProposalSet, TransactionType};
     use bytes::Bytes;
     use tempfile::TempDir;
 
@@ -333,10 +333,10 @@ mod tests {
 
     fn create_test_tx(agent_id: AgentId) -> Transaction {
         Transaction::new(
-            aura_core::TxId::from_content(b"test"),
+            Hash::from_content(b"test"),
             agent_id,
             1000,
-            TransactionKind::UserPrompt,
+            TransactionType::UserPrompt,
             Bytes::from_static(b"test payload"),
         )
     }
@@ -356,7 +356,7 @@ mod tests {
 
         let (inbox_seq, dequeued_tx) = result.unwrap();
         assert_eq!(inbox_seq, 0);
-        assert_eq!(dequeued_tx.tx_id, tx.tx_id);
+        assert_eq!(dequeued_tx.tx_id(), tx.tx_id());
     }
 
     #[test]
@@ -487,11 +487,11 @@ mod tests {
 
         // New agent should have head_seq = 0
         assert_eq!(store.get_head_seq(agent_id).unwrap(), 0);
-        
+
         // Inbox should be empty
         assert!(!store.has_pending_tx(agent_id).unwrap());
         assert_eq!(store.get_inbox_depth(agent_id).unwrap(), 0);
-        
+
         // Dequeue should return None
         assert!(store.dequeue_tx(agent_id).unwrap().is_none());
     }
@@ -499,26 +499,28 @@ mod tests {
     #[test]
     fn test_multiple_agents_isolated() {
         let (store, _dir) = create_test_store();
-        
+
         let agent1 = AgentId::generate();
         let agent2 = AgentId::generate();
-        
+
         // Enqueue to both agents
         let tx1 = create_test_tx(agent1);
         let tx2 = create_test_tx(agent2);
-        
+
         store.enqueue_tx(&tx1).unwrap();
         store.enqueue_tx(&tx2).unwrap();
-        
+
         // Each agent should have exactly 1 pending tx
         assert_eq!(store.get_inbox_depth(agent1).unwrap(), 1);
         assert_eq!(store.get_inbox_depth(agent2).unwrap(), 1);
-        
+
         // Process agent1
         let (inbox_seq, tx) = store.dequeue_tx(agent1).unwrap().unwrap();
         let entry = RecordEntry::builder(1, tx).build();
-        store.append_entry_atomic(agent1, 1, &entry, inbox_seq).unwrap();
-        
+        store
+            .append_entry_atomic(agent1, 1, &entry, inbox_seq)
+            .unwrap();
+
         // Agent1 should have head_seq=1, agent2 should still have head_seq=0
         assert_eq!(store.get_head_seq(agent1).unwrap(), 1);
         assert_eq!(store.get_head_seq(agent2).unwrap(), 0);
@@ -528,22 +530,24 @@ mod tests {
     fn test_large_inbox_depth() {
         let (store, _dir) = create_test_store();
         let agent_id = AgentId::generate();
-        
+
         // Enqueue 100 transactions
         for _ in 0..100 {
             let tx = create_test_tx(agent_id);
             store.enqueue_tx(&tx).unwrap();
         }
-        
+
         assert_eq!(store.get_inbox_depth(agent_id).unwrap(), 100);
-        
+
         // Process them all
         for seq in 1..=100 {
             let (inbox_seq, tx) = store.dequeue_tx(agent_id).unwrap().unwrap();
             let entry = RecordEntry::builder(seq, tx).build();
-            store.append_entry_atomic(agent_id, seq, &entry, inbox_seq).unwrap();
+            store
+                .append_entry_atomic(agent_id, seq, &entry, inbox_seq)
+                .unwrap();
         }
-        
+
         assert_eq!(store.get_inbox_depth(agent_id).unwrap(), 0);
         assert_eq!(store.get_head_seq(agent_id).unwrap(), 100);
     }
@@ -552,7 +556,7 @@ mod tests {
     fn test_scan_empty_record() {
         let (store, _dir) = create_test_store();
         let agent_id = AgentId::generate();
-        
+
         let entries = store.scan_record(agent_id, 1, 10).unwrap();
         assert!(entries.is_empty());
     }
@@ -561,16 +565,18 @@ mod tests {
     fn test_scan_partial_range() {
         let (store, _dir) = create_test_store();
         let agent_id = AgentId::generate();
-        
+
         // Create 10 entries
         for i in 1..=10 {
             let tx = create_test_tx(agent_id);
             store.enqueue_tx(&tx).unwrap();
             let (inbox_seq, tx) = store.dequeue_tx(agent_id).unwrap().unwrap();
             let entry = RecordEntry::builder(i, tx).build();
-            store.append_entry_atomic(agent_id, i, &entry, inbox_seq).unwrap();
+            store
+                .append_entry_atomic(agent_id, i, &entry, inbox_seq)
+                .unwrap();
         }
-        
+
         // Scan from middle
         let entries = store.scan_record(agent_id, 5, 3).unwrap();
         assert_eq!(entries.len(), 3);
@@ -583,16 +589,18 @@ mod tests {
     fn test_scan_beyond_end() {
         let (store, _dir) = create_test_store();
         let agent_id = AgentId::generate();
-        
+
         // Create 5 entries
         for i in 1..=5 {
             let tx = create_test_tx(agent_id);
             store.enqueue_tx(&tx).unwrap();
             let (inbox_seq, tx) = store.dequeue_tx(agent_id).unwrap().unwrap();
             let entry = RecordEntry::builder(i, tx).build();
-            store.append_entry_atomic(agent_id, i, &entry, inbox_seq).unwrap();
+            store
+                .append_entry_atomic(agent_id, i, &entry, inbox_seq)
+                .unwrap();
         }
-        
+
         // Scan with limit beyond end
         let entries = store.scan_record(agent_id, 3, 100).unwrap();
         assert_eq!(entries.len(), 3); // Only entries 3, 4, 5
@@ -602,49 +610,65 @@ mod tests {
     fn test_get_nonexistent_entry() {
         let (store, _dir) = create_test_store();
         let agent_id = AgentId::generate();
-        
+
         let result = store.get_record_entry(agent_id, 999);
-        assert!(matches!(result, Err(StoreError::RecordEntryNotFound(_, 999))));
+        assert!(matches!(
+            result,
+            Err(StoreError::RecordEntryNotFound(_, 999))
+        ));
     }
 
     #[test]
     fn test_agent_status_transitions() {
         let (store, _dir) = create_test_store();
         let agent_id = AgentId::generate();
-        
+
         // Default should be Active
-        assert_eq!(store.get_agent_status(agent_id).unwrap(), AgentStatus::Active);
-        
+        assert_eq!(
+            store.get_agent_status(agent_id).unwrap(),
+            AgentStatus::Active
+        );
+
         // Transition to Paused
-        store.set_agent_status(agent_id, AgentStatus::Paused).unwrap();
-        assert_eq!(store.get_agent_status(agent_id).unwrap(), AgentStatus::Paused);
-        
+        store
+            .set_agent_status(agent_id, AgentStatus::Paused)
+            .unwrap();
+        assert_eq!(
+            store.get_agent_status(agent_id).unwrap(),
+            AgentStatus::Paused
+        );
+
         // Transition to Dead
         store.set_agent_status(agent_id, AgentStatus::Dead).unwrap();
         assert_eq!(store.get_agent_status(agent_id).unwrap(), AgentStatus::Dead);
-        
+
         // Can go back to Active
-        store.set_agent_status(agent_id, AgentStatus::Active).unwrap();
-        assert_eq!(store.get_agent_status(agent_id).unwrap(), AgentStatus::Active);
+        store
+            .set_agent_status(agent_id, AgentStatus::Active)
+            .unwrap();
+        assert_eq!(
+            store.get_agent_status(agent_id).unwrap(),
+            AgentStatus::Active
+        );
     }
 
     #[test]
     fn test_transaction_payload_preserved() {
         let (store, _dir) = create_test_store();
         let agent_id = AgentId::generate();
-        
+
         let payload = b"complex payload with \x00 null bytes and unicode: \xC3\xA9";
         let tx = Transaction::new(
-            aura_core::TxId::from_content(payload),
+            Hash::from_content(payload),
             agent_id,
             1000,
-            TransactionKind::UserPrompt,
+            TransactionType::UserPrompt,
             Bytes::from(payload.to_vec()),
         );
-        
+
         store.enqueue_tx(&tx).unwrap();
         let (_, dequeued_tx) = store.dequeue_tx(agent_id).unwrap().unwrap();
-        
+
         assert_eq!(dequeued_tx.payload.as_ref(), payload);
     }
 
@@ -652,25 +676,27 @@ mod tests {
     fn test_record_entry_with_complex_data() {
         let (store, _dir) = create_test_store();
         let agent_id = AgentId::generate();
-        
+
         let tx = create_test_tx(agent_id);
         store.enqueue_tx(&tx).unwrap();
         let (inbox_seq, tx) = store.dequeue_tx(agent_id).unwrap().unwrap();
-        
+
         // Create entry with proposals, decisions, actions, effects
         let mut decision = Decision::new();
         let action_id = aura_core::ActionId::generate();
         decision.accept(action_id);
         decision.reject(0, "test rejection");
-        
+
         let entry = RecordEntry::builder(1, tx)
             .context_hash([42u8; 32])
             .proposals(ProposalSet::new())
             .decision(decision)
             .build();
-        
-        store.append_entry_atomic(agent_id, 1, &entry, inbox_seq).unwrap();
-        
+
+        store
+            .append_entry_atomic(agent_id, 1, &entry, inbox_seq)
+            .unwrap();
+
         // Retrieve and verify
         let retrieved = store.get_record_entry(agent_id, 1).unwrap();
         assert_eq!(retrieved.context_hash, [42u8; 32]);
@@ -686,25 +712,27 @@ mod tests {
     #[test]
     fn test_interleaved_agent_operations() {
         let (store, _dir) = create_test_store();
-        
+
         let agents: Vec<AgentId> = (0..5).map(|_| AgentId::generate()).collect();
-        
+
         // Interleave enqueue operations
         for round in 0..3 {
             for agent in &agents {
                 let tx = create_test_tx(*agent);
                 store.enqueue_tx(&tx).unwrap();
             }
-            
+
             // Process one transaction per agent
             for agent in &agents {
                 let (inbox_seq, tx) = store.dequeue_tx(*agent).unwrap().unwrap();
                 let seq = round as u64 + 1; // Each agent at their own sequence
                 let entry = RecordEntry::builder(seq, tx).build();
-                store.append_entry_atomic(*agent, seq, &entry, inbox_seq).unwrap();
+                store
+                    .append_entry_atomic(*agent, seq, &entry, inbox_seq)
+                    .unwrap();
             }
         }
-        
+
         // Verify each agent processed 3 entries
         for agent in &agents {
             assert_eq!(store.get_head_seq(*agent).unwrap(), 3);
@@ -715,27 +743,34 @@ mod tests {
     fn test_reopen_store() {
         let dir = TempDir::new().unwrap();
         let agent_id = AgentId::generate();
-        
+
         // First session: create and populate
         {
             let store = RocksStore::open(dir.path(), false).unwrap();
-            
+
             let tx = create_test_tx(agent_id);
             store.enqueue_tx(&tx).unwrap();
             let (inbox_seq, tx) = store.dequeue_tx(agent_id).unwrap().unwrap();
             let entry = RecordEntry::builder(1, tx).build();
-            store.append_entry_atomic(agent_id, 1, &entry, inbox_seq).unwrap();
-            
-            store.set_agent_status(agent_id, AgentStatus::Paused).unwrap();
+            store
+                .append_entry_atomic(agent_id, 1, &entry, inbox_seq)
+                .unwrap();
+
+            store
+                .set_agent_status(agent_id, AgentStatus::Paused)
+                .unwrap();
         }
-        
+
         // Second session: verify persistence
         {
             let store = RocksStore::open(dir.path(), false).unwrap();
-            
+
             assert_eq!(store.get_head_seq(agent_id).unwrap(), 1);
-            assert_eq!(store.get_agent_status(agent_id).unwrap(), AgentStatus::Paused);
-            
+            assert_eq!(
+                store.get_agent_status(agent_id).unwrap(),
+                AgentStatus::Paused
+            );
+
             let entry = store.get_record_entry(agent_id, 1).unwrap();
             assert_eq!(entry.seq, 1);
         }

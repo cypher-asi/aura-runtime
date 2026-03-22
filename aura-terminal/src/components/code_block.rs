@@ -46,49 +46,105 @@ pub struct LanguageConfig {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
-            keyword: PURPLE,  // #cb01f4 - purple for keywords
-            string: CYAN,     // #01f4cb - cyan for strings
-            comment: GRAY,    // #888888 - gray for comments
-            number: BLUE,     // #01a4f4 - blue for numbers
-            function: BLUE,   // #01a4f4 - blue for functions
-            r#type: CYAN,     // #01f4cb - cyan for types
-            operator: RED,    // #f4012a - red for operators
+            keyword: PURPLE, // #cb01f4 - purple for keywords
+            string: CYAN,    // #01f4cb - cyan for strings
+            comment: GRAY,   // #888888 - gray for comments
+            number: BLUE,    // #01a4f4 - blue for numbers
+            function: BLUE,  // #01a4f4 - blue for functions
+            r#type: CYAN,    // #01f4cb - cyan for types
+            operator: RED,   // #f4012a - red for operators
         }
     }
 }
 
 /// Keywords for various languages.
 const RUST_KEYWORDS: &[&str] = &[
-    "fn", "let", "mut", "const", "static", "if", "else", "match", "for", "while", "loop",
-    "return", "break", "continue", "struct", "enum", "impl", "trait", "type", "where",
-    "pub", "mod", "use", "crate", "super", "self", "Self", "async", "await", "move",
-    "dyn", "ref", "in", "as", "unsafe", "extern", "true", "false", "Some", "None", "Ok", "Err",
+    "fn", "let", "mut", "const", "static", "if", "else", "match", "for", "while", "loop", "return",
+    "break", "continue", "struct", "enum", "impl", "trait", "type", "where", "pub", "mod", "use",
+    "crate", "super", "self", "Self", "async", "await", "move", "dyn", "ref", "in", "as", "unsafe",
+    "extern", "true", "false", "Some", "None", "Ok", "Err",
 ];
 
 const PYTHON_KEYWORDS: &[&str] = &[
-    "def", "class", "if", "elif", "else", "for", "while", "return", "import", "from",
-    "as", "try", "except", "finally", "with", "lambda", "yield", "raise", "pass",
-    "break", "continue", "and", "or", "not", "in", "is", "True", "False", "None",
-    "async", "await", "self", "cls",
+    "def", "class", "if", "elif", "else", "for", "while", "return", "import", "from", "as", "try",
+    "except", "finally", "with", "lambda", "yield", "raise", "pass", "break", "continue", "and",
+    "or", "not", "in", "is", "True", "False", "None", "async", "await", "self", "cls",
 ];
 
 const JS_KEYWORDS: &[&str] = &[
-    "function", "const", "let", "var", "if", "else", "for", "while", "do", "switch",
-    "case", "break", "continue", "return", "try", "catch", "finally", "throw",
-    "class", "extends", "new", "this", "super", "import", "export", "default", "from",
-    "async", "await", "yield", "true", "false", "null", "undefined", "typeof", "instanceof",
+    "function",
+    "const",
+    "let",
+    "var",
+    "if",
+    "else",
+    "for",
+    "while",
+    "do",
+    "switch",
+    "case",
+    "break",
+    "continue",
+    "return",
+    "try",
+    "catch",
+    "finally",
+    "throw",
+    "class",
+    "extends",
+    "new",
+    "this",
+    "super",
+    "import",
+    "export",
+    "default",
+    "from",
+    "async",
+    "await",
+    "yield",
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "typeof",
+    "instanceof",
 ];
 
 const GO_KEYWORDS: &[&str] = &[
-    "func", "var", "const", "type", "struct", "interface", "map", "chan", "if", "else",
-    "for", "range", "switch", "case", "default", "break", "continue", "return", "go",
-    "defer", "select", "package", "import", "true", "false", "nil", "make", "new",
+    "func",
+    "var",
+    "const",
+    "type",
+    "struct",
+    "interface",
+    "map",
+    "chan",
+    "if",
+    "else",
+    "for",
+    "range",
+    "switch",
+    "case",
+    "default",
+    "break",
+    "continue",
+    "return",
+    "go",
+    "defer",
+    "select",
+    "package",
+    "import",
+    "true",
+    "false",
+    "nil",
+    "make",
+    "new",
 ];
 
 const SHELL_KEYWORDS: &[&str] = &[
-    "if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case", "esac",
-    "function", "return", "exit", "echo", "export", "source", "alias", "cd", "pwd",
-    "ls", "rm", "cp", "mv", "mkdir", "chmod", "chown", "grep", "sed", "awk", "cat",
+    "if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case", "esac", "function",
+    "return", "exit", "echo", "export", "source", "alias", "cd", "pwd", "ls", "rm", "cp", "mv",
+    "mkdir", "chmod", "chown", "grep", "sed", "awk", "cat",
 ];
 
 /// Get keywords for a language.
@@ -141,7 +197,7 @@ fn get_language_label(lang: &str) -> &'static str {
         "xml" => "XML",
         "graphql" | "gql" => "GraphQL",
         // Unknown languages default to "Code"
-        _ => "Code"
+        _ => "Code",
     }
 }
 
@@ -172,43 +228,48 @@ impl CodeBlock {
         let config = LanguageConfig::default();
         let keywords = get_keywords(&self.language);
         let label = get_language_label(&self.language);
-        
+
         // Calculate the box width (content width + padding)
-        let content_width = self.lines.iter()
+        let content_width = self
+            .lines
+            .iter()
             .map(String::len)
             .max()
             .unwrap_or(0)
             .max(label.len() + 4);
         let box_width = content_width.min(max_width.saturating_sub(4)) + 4; // 2 padding on each side
-        
+
         let mut result: Vec<Line<'static>> = Vec::new();
-        
+
         // Top border with language label
         let label_str = format!(" {label} ");
         let border_after_label = "─".repeat(box_width.saturating_sub(label_str.len() + 3));
         result.push(Line::from(vec![
             Span::styled("╭─", Style::default().fg(theme.colors.muted)),
-            Span::styled(label_str, Style::default().fg(theme.colors.secondary).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                label_str,
+                Style::default()
+                    .fg(theme.colors.secondary)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(border_after_label, Style::default().fg(theme.colors.muted)),
             Span::styled("╮", Style::default().fg(theme.colors.muted)),
         ]));
-        
+
         // Code lines with syntax highlighting
         for line in &self.lines {
             let highlighted = highlight_line(line, keywords, &config, theme);
             let line_len = line.len();
             let padding = " ".repeat(box_width.saturating_sub(line_len + 4));
-            
-            let mut spans = vec![
-                Span::styled("│ ", Style::default().fg(theme.colors.muted)),
-            ];
+
+            let mut spans = vec![Span::styled("│ ", Style::default().fg(theme.colors.muted))];
             spans.extend(highlighted);
             spans.push(Span::styled(padding, Style::default()));
             spans.push(Span::styled(" │", Style::default().fg(theme.colors.muted)));
-            
+
             result.push(Line::from(spans));
         }
-        
+
         // Bottom border
         let bottom_border = "─".repeat(box_width.saturating_sub(2));
         result.push(Line::from(vec![
@@ -216,20 +277,25 @@ impl CodeBlock {
             Span::styled(bottom_border, Style::default().fg(theme.colors.muted)),
             Span::styled("╯", Style::default().fg(theme.colors.muted)),
         ]));
-        
+
         result
     }
 }
 
 /// Highlight a single line of code.
-fn highlight_line(line: &str, keywords: &[&str], config: &LanguageConfig, theme: &Theme) -> Vec<Span<'static>> {
+fn highlight_line(
+    line: &str,
+    keywords: &[&str],
+    config: &LanguageConfig,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
-    
+
     while i < chars.len() {
         let c = chars[i];
-        
+
         // Check for string literals
         if c == '"' || c == '\'' || c == '`' {
             let quote = c;
@@ -239,14 +305,20 @@ fn highlight_line(line: &str, keywords: &[&str], config: &LanguageConfig, theme:
                 let ch = chars[i];
                 string_content.push(ch);
                 i += 1;
-                if ch == quote && (string_content.len() < 2 || string_content.chars().nth(string_content.len() - 2) != Some('\\')) {
+                if ch == quote
+                    && (string_content.len() < 2
+                        || string_content.chars().nth(string_content.len() - 2) != Some('\\'))
+                {
                     break;
                 }
             }
-            spans.push(Span::styled(string_content, Style::default().fg(config.string)));
+            spans.push(Span::styled(
+                string_content,
+                Style::default().fg(config.string),
+            ));
             continue;
         }
-        
+
         // Check for comments (// or #)
         if c == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
             let comment: String = chars[i..].iter().collect();
@@ -258,19 +330,25 @@ fn highlight_line(line: &str, keywords: &[&str], config: &LanguageConfig, theme:
             spans.push(Span::styled(comment, Style::default().fg(config.comment)));
             break;
         }
-        
+
         // Check for numbers
         if c.is_ascii_digit() {
             let mut num = String::from(c);
             i += 1;
-            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.' || chars[i] == 'x' || chars[i] == 'b' || chars[i].is_ascii_hexdigit()) {
+            while i < chars.len()
+                && (chars[i].is_ascii_digit()
+                    || chars[i] == '.'
+                    || chars[i] == 'x'
+                    || chars[i] == 'b'
+                    || chars[i].is_ascii_hexdigit())
+            {
                 num.push(chars[i]);
                 i += 1;
             }
             spans.push(Span::styled(num, Style::default().fg(config.number)));
             continue;
         }
-        
+
         // Check for identifiers and keywords
         if c.is_alphabetic() || c == '_' {
             let mut word = String::from(c);
@@ -279,10 +357,15 @@ fn highlight_line(line: &str, keywords: &[&str], config: &LanguageConfig, theme:
                 word.push(chars[i]);
                 i += 1;
             }
-            
+
             // Check if it's a keyword
             if keywords.contains(&word.as_str()) {
-                spans.push(Span::styled(word, Style::default().fg(config.keyword).add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(
+                    word,
+                    Style::default()
+                        .fg(config.keyword)
+                        .add_modifier(Modifier::BOLD),
+                ));
             }
             // Check if followed by ( - likely a function
             else if i < chars.len() && chars[i] == '(' {
@@ -291,13 +374,15 @@ fn highlight_line(line: &str, keywords: &[&str], config: &LanguageConfig, theme:
             // Check if it looks like a type (starts with uppercase)
             else if word.chars().next().is_some_and(char::is_uppercase) {
                 spans.push(Span::styled(word, Style::default().fg(config.r#type)));
-            }
-            else {
-                spans.push(Span::styled(word, Style::default().fg(theme.colors.foreground)));
+            } else {
+                spans.push(Span::styled(
+                    word,
+                    Style::default().fg(theme.colors.foreground),
+                ));
             }
             continue;
         }
-        
+
         // Check for operators
         if "+-*/%=<>!&|^~?:".contains(c) {
             let mut op = String::from(c);
@@ -310,16 +395,19 @@ fn highlight_line(line: &str, keywords: &[&str], config: &LanguageConfig, theme:
             spans.push(Span::styled(op, Style::default().fg(config.operator)));
             continue;
         }
-        
+
         // Default: just add the character
-        spans.push(Span::styled(c.to_string(), Style::default().fg(theme.colors.foreground)));
+        spans.push(Span::styled(
+            c.to_string(),
+            Style::default().fg(theme.colors.foreground),
+        ));
         i += 1;
     }
-    
+
     if spans.is_empty() {
         spans.push(Span::styled(String::new(), Style::default()));
     }
-    
+
     spans
 }
 

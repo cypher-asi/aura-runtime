@@ -34,14 +34,11 @@ pub enum PermissionLevel {
 #[must_use]
 pub fn default_tool_permission(tool: &str) -> PermissionLevel {
     match tool {
-        // Safe read-only operations
-        "fs_ls" | "fs_read" | "fs_stat" | "search_code" => PermissionLevel::AlwaysAllow,
+        // Safe read-only operations + command execution (autonomous operation)
+        "fs_ls" | "fs_read" | "fs_stat" | "search_code" | "cmd_run" => PermissionLevel::AlwaysAllow,
 
         // Write operations need confirmation once per session
         "fs_write" | "fs_edit" => PermissionLevel::AskOnce,
-
-        // Command execution - allowed by default for autonomous operation
-        "cmd_run" => PermissionLevel::AlwaysAllow,
 
         // Unknown tools are denied by default
         _ => PermissionLevel::Deny,

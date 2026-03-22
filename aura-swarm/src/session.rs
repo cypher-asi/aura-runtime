@@ -3,7 +3,12 @@
 //! Each WebSocket connection maps to a `Session` that maintains conversation
 //! state, tool configuration, and token accounting across turns.
 
-use crate::protocol::*;
+use crate::protocol::{
+    AssistantMessageEnd, AssistantMessageStart, ErrorMsg, FilesChanged, InboundMessage,
+    OutboundMessage, SessionInit, SessionReady, SessionUsage, TextDelta, ThinkingDelta, ToolInfo,
+    ToolResultMsg, ToolUseStart, UserMessage,
+};
+use async_trait::async_trait;
 use aura_core::{AgentId, ExternalToolDefinition};
 use aura_executor::ExecutorRouter;
 use aura_kernel::{StreamCallback, StreamCallbackEvent, TurnConfig, TurnProcessor, TurnResult};
@@ -12,7 +17,6 @@ use aura_reasoner::{
 };
 use aura_store::{AgentStatus, Store, StoreError};
 use aura_tools::{DefaultToolRegistry, ToolConfig, ToolExecutor, ToolRegistry};
-use async_trait::async_trait;
 use axum::extract::ws::{Message as WsMessage, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use std::path::PathBuf;
@@ -105,11 +109,7 @@ impl Store for NullStore {
         Ok(AgentStatus::Active)
     }
 
-    fn set_agent_status(
-        &self,
-        _agent_id: AgentId,
-        _status: AgentStatus,
-    ) -> Result<(), StoreError> {
+    fn set_agent_status(&self, _agent_id: AgentId, _status: AgentStatus) -> Result<(), StoreError> {
         Ok(())
     }
 
@@ -152,7 +152,7 @@ pub struct Session {
     pub cumulative_output_tokens: u64,
     /// Workspace directory for this session.
     pub workspace: PathBuf,
-    /// Whether session_init has been received.
+    /// Whether `session_init` has been received.
     pub initialized: bool,
     /// Available tool definitions (builtin + external).
     pub tool_definitions: Vec<ToolDefinition>,
@@ -221,6 +221,7 @@ impl Session {
             max_tokens: self.max_tokens,
             temperature: self.temperature,
             workspace_base: self.workspace.clone(),
+            #[allow(clippy::cast_possible_truncation)]
             context_window_tokens: self.context_window_tokens as usize,
             ..TurnConfig::default()
         }
@@ -254,7 +255,7 @@ struct ActiveTurn {
     join_handle: JoinHandle<anyhow::Result<TurnResult>>,
     /// Handle to the stream-forwarding task.
     stream_forward_handle: JoinHandle<()>,
-    /// Message ID for this turn (used in assistant_message_end).
+    /// Message ID for this turn (used in `assistant_message_end`).
     message_id: String,
 }
 
@@ -269,14 +270,11 @@ enum WsAction {
 }
 
 /// Classify a raw WebSocket receive result.
-fn classify_ws_frame(
-    msg_result: Option<Result<WsMessage, axum::Error>>,
-) -> WsAction {
+fn classify_ws_frame(msg_result: Option<Result<WsMessage, axum::Error>>) -> WsAction {
     match msg_result {
-        Some(Ok(WsMessage::Text(text))) => WsAction::Message(text.to_string()),
-        Some(Ok(WsMessage::Close(_))) | None => WsAction::Close,
+        Some(Ok(WsMessage::Text(text))) => WsAction::Message(text),
+        Some(Ok(WsMessage::Close(_)) | Err(_)) | None => WsAction::Close,
         Some(Ok(_)) => WsAction::Continue,
-        Some(Err(_)) => WsAction::Close,
     }
 }
 
@@ -296,7 +294,7 @@ pub async fn handle_ws_connection(socket: WebSocket, ctx: WsContext) {
         while let Some(msg) = outbound_rx.recv().await {
             match serde_json::to_string(&msg) {
                 Ok(json) => {
-                    if ws_tx.send(WsMessage::Text(json.into())).await.is_err() {
+                    if ws_tx.send(WsMessage::Text(json)).await.is_err() {
                         break;
                     }
                 }
@@ -602,14 +600,12 @@ fn finalize_turn(
                 message: "Turn processing task panicked".into(),
                 recoverable: false,
             }));
-            let _ = outbound_tx.send(OutboundMessage::AssistantMessageEnd(
-                AssistantMessageEnd {
-                    message_id: message_id.to_string(),
-                    stop_reason: "error".into(),
-                    usage: SessionUsage::default(),
-                    files_changed: FilesChanged::default(),
-                },
-            ));
+            let _ = outbound_tx.send(OutboundMessage::AssistantMessageEnd(AssistantMessageEnd {
+                message_id: message_id.to_string(),
+                stop_reason: "error".into(),
+                usage: SessionUsage::default(),
+                files_changed: FilesChanged::default(),
+            }));
             return;
         }
     };
@@ -642,8 +638,7 @@ fn finalize_turn(
 
             let context_utilization = if session.context_window_tokens > 0 {
                 #[allow(clippy::cast_precision_loss)]
-                let ratio =
-                    input_tokens as f32 / session.context_window_tokens as f32;
+                let ratio = input_tokens as f32 / session.context_window_tokens as f32;
                 ratio.min(1.0)
             } else {
                 0.0
@@ -651,22 +646,20 @@ fn finalize_turn(
 
             let files_changed = extract_files_changed(&turn_result);
 
-            let _ = outbound_tx.send(OutboundMessage::AssistantMessageEnd(
-                AssistantMessageEnd {
-                    message_id: message_id.to_string(),
-                    stop_reason: stop_reason.into(),
-                    usage: SessionUsage {
-                        input_tokens,
-                        output_tokens,
-                        cumulative_input_tokens: session.cumulative_input_tokens,
-                        cumulative_output_tokens: session.cumulative_output_tokens,
-                        context_utilization,
-                        model: turn_result.model.clone(),
-                        provider: turn_result.provider.clone(),
-                    },
-                    files_changed,
+            let _ = outbound_tx.send(OutboundMessage::AssistantMessageEnd(AssistantMessageEnd {
+                message_id: message_id.to_string(),
+                stop_reason: stop_reason.into(),
+                usage: SessionUsage {
+                    input_tokens,
+                    output_tokens,
+                    cumulative_input_tokens: session.cumulative_input_tokens,
+                    cumulative_output_tokens: session.cumulative_output_tokens,
+                    context_utilization,
+                    model: turn_result.model.clone(),
+                    provider: turn_result.provider.clone(),
                 },
-            ));
+                files_changed,
+            }));
 
             info!(
                 session_id = %session.session_id,
@@ -717,7 +710,7 @@ fn extract_files_changed(turn_result: &TurnResult) -> FilesChanged {
                     let existed = tool
                         .metadata
                         .get("file_existed")
-                        .map_or(false, |v| v == "true");
+                        .is_some_and(|v| v == "true");
                     if existed {
                         modified.push(path);
                     } else {

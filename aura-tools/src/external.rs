@@ -11,7 +11,7 @@ use aura_reasoner::ToolDefinition;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 
-/// Request body POSTed to the external tool's callback URL.
+/// Request body posted to the external tool's callback URL.
 #[derive(Debug, Serialize)]
 struct ExternalToolRequest {
     tool_name: String,

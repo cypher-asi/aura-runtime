@@ -129,7 +129,7 @@ mod tests {
         };
 
         let reasoner = HttpReasoner::new(config).unwrap();
-        
+
         // Test that the config is stored correctly
         assert_eq!(reasoner.config.gateway_url, "http://example.com:3000");
     }
@@ -139,7 +139,7 @@ mod tests {
         // Use a non-routable address to test failure handling
         let config = ReasonerConfig {
             gateway_url: "http://192.0.2.1:1".to_string(), // Non-routable TEST-NET address
-            timeout_ms: 100, // Short timeout
+            timeout_ms: 100,                               // Short timeout
             max_retries: 0,
         };
 

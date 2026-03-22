@@ -69,7 +69,7 @@ enum UiMode {
 async fn main() -> anyhow::Result<()> {
     // Load .env file if present (for development)
     let _ = dotenvy::dotenv();
-    
+
     let args = Args::parse();
 
     match args.ui {
@@ -171,7 +171,10 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
         let (tx, rx) = mpsc::channel::<Transaction>(100);
         (tx, Some(rx))
     };
-    let process_manager = Arc::new(ProcessManager::new(process_tx, ProcessManagerConfig::default()));
+    let process_manager = Arc::new(ProcessManager::new(
+        process_tx,
+        ProcessManagerConfig::default(),
+    ));
 
     // Helper macro to take the process_rx (can only be called once)
     macro_rules! take_process_rx {
@@ -187,8 +190,13 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
             let provider = Arc::new(MockProvider::simple_response(
                 "Mock mode: Set ANTHROPIC_API_KEY environment variable to enable real AI responses.",
             ));
-            let processor =
-                TurnProcessor::new(provider, store.clone(), executor, tool_registry, turn_config);
+            let processor = TurnProcessor::new(
+                provider,
+                store.clone(),
+                executor,
+                tool_registry,
+                turn_config,
+            );
 
             // Set initial status to Mock Mode
             let _ = cmd_tx.try_send(UiCommand::SetStatus("Mock Mode".to_string()));
@@ -330,7 +338,7 @@ where
     let cmd_tx_for_stream = commands.clone();
     let thinking_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let thinking_started_clone = thinking_started.clone();
-    
+
     let stream_callback: StreamCallback = Box::new(move |event| {
         match event {
             StreamCallbackEvent::ThinkingDelta(thinking) => {
@@ -371,8 +379,8 @@ where
                 thinking_started_clone.store(false, std::sync::atomic::Ordering::SeqCst);
             }
             StreamCallbackEvent::Error { code, message, .. } => {
-                let _ = cmd_tx_for_stream
-                    .try_send(UiCommand::SetStatus(format!("[{code}] {message}")));
+                let _ =
+                    cmd_tx_for_stream.try_send(UiCommand::SetStatus(format!("[{code}] {message}")));
             }
         }
     });
@@ -388,7 +396,7 @@ where
                     tx_type = ?completion_tx.tx_type,
                     "Processing async process completion"
                 );
-                
+
                 // Process completion transactions are already created by ProcessManager.
                 // They need to be enqueued, processed, and recorded.
                 if let Err(e) = store.enqueue_tx(&completion_tx) {
@@ -402,20 +410,20 @@ where
                     let entry = aura_core::RecordEntry::builder(seq, tx.clone())
                         .context_hash(context_hash)
                         .build();
-                    
+
                     if let Err(e) = store.append_entry_atomic(agent_id, seq, &entry, inbox_seq) {
                         error!(error = %e, "Failed to persist completion record");
                     } else {
                         debug!(seq = seq, "Completion record persisted");
                         send_record_to_ui(&commands, seq, &tx, &entry).await;
                         seq += 1;
-                        
+
                         // Notify UI of completion
                         let _ = commands.send(UiCommand::SetStatus("Process completed".to_string())).await;
                     }
                 }
             }
-            
+
             // Handle UI events
             Some(event) = events.recv() => {
                 match event {
@@ -536,7 +544,7 @@ where
 
                                 if let Ok(Some((proposal_inbox_seq, dequeued_proposal_tx))) = store.dequeue_tx(agent_id) {
                                     let proposal_context_hash = compute_context_hash(seq, &dequeued_proposal_tx);
-                                    
+
                                     // Proposal record has no actions/effects - just records the suggestion
                                     let proposal_entry = aura_core::RecordEntry::builder(seq, dequeued_proposal_tx.clone())
                                         .context_hash(proposal_context_hash)
@@ -837,9 +845,7 @@ async fn send_record_to_ui(
         .effects
         .iter()
         .filter(|e| matches!(e.status, aura_core::EffectStatus::Failed))
-        .filter_map(|e| {
-            String::from_utf8(e.payload.to_vec()).ok()
-        })
+        .filter_map(|e| String::from_utf8(e.payload.to_vec()).ok())
         .collect::<Vec<_>>()
         .join("; ");
 
@@ -975,7 +981,12 @@ fn compute_context_hash(seq: u64, tx: &Transaction) -> [u8; 32] {
 fn create_response_transaction(agent_id: AgentId, response_text: &str) -> Transaction {
     use aura_core::TransactionType;
 
-    Transaction::new_chained(agent_id, TransactionType::AgentMsg, response_text.as_bytes().to_vec(), None)
+    Transaction::new_chained(
+        agent_id,
+        TransactionType::AgentMsg,
+        response_text.as_bytes().to_vec(),
+        None,
+    )
 }
 
 /// Load existing records from the store and send to UI.
@@ -999,7 +1010,7 @@ fn load_existing_records(
             return;
         }
     };
-    
+
     if head_seq == 0 {
         return; // No records yet
     }
@@ -1079,9 +1090,7 @@ fn load_existing_records(
             .effects
             .iter()
             .filter(|e| matches!(e.status, aura_core::EffectStatus::Failed))
-            .filter_map(|e| {
-                String::from_utf8(e.payload.to_vec()).ok()
-            })
+            .filter_map(|e| String::from_utf8(e.payload.to_vec()).ok())
             .collect::<Vec<_>>()
             .join("; ");
 

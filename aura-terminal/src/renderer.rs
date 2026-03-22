@@ -22,7 +22,7 @@ use ratatui::{
 fn parse_markdown_line(text: &str, base_style: Style, theme: &Theme) -> Vec<Span<'static>> {
     // Check for line-level formatting first
     let trimmed = text.trim_start();
-    
+
     // Headers: # ## ###
     if trimmed.starts_with("# ") {
         return vec![Span::styled(
@@ -36,15 +36,17 @@ fn parse_markdown_line(text: &str, base_style: Style, theme: &Theme) -> Vec<Span
             base_style.add_modifier(Modifier::BOLD),
         )];
     }
-    
+
     // Blockquotes: > text
     if trimmed.starts_with("> ") {
         return vec![Span::styled(
             text.to_string(),
-            base_style.fg(theme.colors.secondary).add_modifier(Modifier::ITALIC),
+            base_style
+                .fg(theme.colors.secondary)
+                .add_modifier(Modifier::ITALIC),
         )];
     }
-    
+
     // List items: - item or * item
     if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
         let indent = text.len() - trimmed.len();
@@ -57,7 +59,7 @@ fn parse_markdown_line(text: &str, base_style: Style, theme: &Theme) -> Vec<Span
         result.extend(parse_markdown_inline(rest, base_style, theme));
         return result;
     }
-    
+
     // Numbered lists: 1. 2. etc
     if let Some(dot_pos) = trimmed.find(". ") {
         if dot_pos <= 3 && trimmed[..dot_pos].chars().all(|c| c.is_ascii_digit()) {
@@ -73,7 +75,7 @@ fn parse_markdown_line(text: &str, base_style: Style, theme: &Theme) -> Vec<Span
             return result;
         }
     }
-    
+
     // Regular line - parse inline formatting
     parse_markdown_inline(text, base_style, theme)
 }
@@ -82,7 +84,7 @@ fn parse_markdown_line(text: &str, base_style: Style, theme: &Theme) -> Vec<Span
 fn parse_markdown_inline(text: &str, base_style: Style, theme: &Theme) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut remaining = text;
-    
+
     while !remaining.is_empty() {
         // Try to find the next formatting marker
         if let Some((start, marker_type, marker_len)) = find_next_marker(remaining) {
@@ -90,7 +92,7 @@ fn parse_markdown_inline(text: &str, base_style: Style, theme: &Theme) -> Vec<Sp
             if start > 0 {
                 spans.push(Span::styled(remaining[..start].to_string(), base_style));
             }
-            
+
             // Find the closing marker
             let after_open = &remaining[start + marker_len..];
             let close_marker = match marker_type {
@@ -98,14 +100,13 @@ fn parse_markdown_inline(text: &str, base_style: Style, theme: &Theme) -> Vec<Sp
                 MarkerType::Italic => "*",
                 MarkerType::Code => "`",
             };
-            
+
             if let Some(close_pos) = after_open.find(close_marker) {
                 let content = &after_open[..close_pos];
                 let styled_content = match marker_type {
-                    MarkerType::Bold => Span::styled(
-                        content.to_string(),
-                        base_style.add_modifier(Modifier::BOLD),
-                    ),
+                    MarkerType::Bold => {
+                        Span::styled(content.to_string(), base_style.add_modifier(Modifier::BOLD))
+                    }
                     MarkerType::Italic => Span::styled(
                         content.to_string(),
                         base_style.add_modifier(Modifier::ITALIC),
@@ -121,7 +122,10 @@ fn parse_markdown_inline(text: &str, base_style: Style, theme: &Theme) -> Vec<Sp
                 remaining = &after_open[close_pos + close_marker.len()..];
             } else {
                 // No closing marker - treat as regular text
-                spans.push(Span::styled(remaining[..start + marker_len].to_string(), base_style));
+                spans.push(Span::styled(
+                    remaining[..start + marker_len].to_string(),
+                    base_style,
+                ));
                 remaining = &remaining[start + marker_len..];
             }
         } else {
@@ -130,11 +134,11 @@ fn parse_markdown_inline(text: &str, base_style: Style, theme: &Theme) -> Vec<Sp
             break;
         }
     }
-    
+
     if spans.is_empty() {
         spans.push(Span::styled(String::new(), base_style));
     }
-    
+
     spans
 }
 
@@ -150,14 +154,14 @@ fn find_next_marker(text: &str) -> Option<(usize, MarkerType, usize)> {
     // Find ** (bold) - must check before * (italic)
     let mut best: Option<(usize, MarkerType, usize)> =
         text.find("**").map(|pos| (pos, MarkerType::Bold, 2));
-    
+
     // Find * (italic) - only if not part of **
     for (i, c) in text.char_indices() {
         if c == '*' {
             // Check it's not part of **
             let is_double = text[i..].starts_with("**");
             let prev_is_star = i > 0 && text.as_bytes().get(i - 1) == Some(&b'*');
-            
+
             if !is_double && !prev_is_star {
                 let italic_pos = i;
                 match best {
@@ -168,7 +172,7 @@ fn find_next_marker(text: &str) -> Option<(usize, MarkerType, usize)> {
             }
         }
     }
-    
+
     // Find ` (code)
     if let Some(pos) = text.find('`') {
         // Skip ``` code blocks (they're handled at line level)
@@ -179,7 +183,7 @@ fn find_next_marker(text: &str) -> Option<(usize, MarkerType, usize)> {
             }
         }
     }
-    
+
     best
 }
 
@@ -203,10 +207,10 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment> {
     let mut in_code_block = false;
     let mut code_language = String::new();
     let mut code_content = String::new();
-    
+
     for line in content.lines() {
         let trimmed = line.trim();
-        
+
         if trimmed.starts_with("```") {
             if in_code_block {
                 // End of code block
@@ -239,7 +243,7 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment> {
             current_text.push_str(line);
         }
     }
-    
+
     // Flush remaining content
     if in_code_block {
         // Unclosed code block - treat as text
@@ -254,11 +258,11 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment> {
             current_text.push_str(&code_content);
         }
     }
-    
+
     if !current_text.is_empty() {
         segments.push(ContentSegment::Text(current_text));
     }
-    
+
     segments
 }
 
@@ -287,7 +291,10 @@ pub fn render(frame: &mut Frame, app: &App, theme: &Theme) {
     let swarm_offset = if app.swarm_panel_visible() {
         // Match the swarm panel width percentages from render_content_panels
         let swarm_percent: u32 = if app.record_panel_visible() { 20 } else { 25 };
-        #[expect(clippy::cast_possible_truncation, reason = "UI widths are always < u16::MAX")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "UI widths are always < u16::MAX"
+        )]
         let offset = (u32::from(main_chunks[2].width) * swarm_percent / 100) as u16;
         offset
     } else {
@@ -325,10 +332,7 @@ fn render_content_panels(frame: &mut Frame, area: Rect, app: &App, theme: &Theme
             // Swarm + Chat: Swarm (25%) | Chat (75%)
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(75),
-                ])
+                .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
                 .split(area);
             render_swarm_panel(frame, chunks[0], app, theme);
             render_chat_panel(frame, chunks[1], app, theme);
@@ -337,10 +341,7 @@ fn render_content_panels(frame: &mut Frame, area: Rect, app: &App, theme: &Theme
             // Chat + Record: Chat (65%) | Record (35%)
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(65),
-                    Constraint::Percentage(35),
-                ])
+                .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
                 .split(area);
             render_chat_panel(frame, chunks[0], app, theme);
             render_record_panel(frame, chunks[1], app, theme);
@@ -385,11 +386,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             Span::styled(url, Style::default().fg(theme.colors.muted)),
         ];
 
-        let api_status = vec![
-            Line::from(""),
-            Line::from(api_spans),
-            Line::from(""),
-        ];
+        let api_status = vec![Line::from(""), Line::from(api_spans), Line::from("")];
         frame.render_widget(
             Paragraph::new(api_status).alignment(Alignment::Right),
             header_layout[1],
@@ -405,7 +402,7 @@ fn render_thinking_section(frame: &mut Frame, area: Rect, app: &App, theme: &The
 
     // Divider line at the top - left aligned like " Thinker ────────"
     let divider_width = area.width as usize;
-    
+
     // Build label with optional spinner (extra spacing around emoji)
     let label = if is_thinking {
         format!(" Thinker  {}  ", app.spinner_char())
@@ -414,13 +411,13 @@ fn render_thinking_section(frame: &mut Frame, area: Rect, app: &App, theme: &The
     };
     let label_len = label.chars().count();
     let right_dashes = divider_width.saturating_sub(label_len);
-    
+
     let divider_spans = vec![
+        Span::styled(label, Style::default().fg(theme.colors.muted)),
         Span::styled(
-            label,
+            "─".repeat(right_dashes),
             Style::default().fg(theme.colors.muted),
         ),
-        Span::styled("─".repeat(right_dashes), Style::default().fg(theme.colors.muted)),
     ];
 
     // Get last 3 lines of thinking content
@@ -434,7 +431,7 @@ fn render_thinking_section(frame: &mut Frame, area: Rect, app: &App, theme: &The
         // Word-wrap thinking content to fit width
         let max_width = area.width.saturating_sub(2) as usize; // 1 char padding each side
         let mut wrapped_lines: Vec<String> = Vec::new();
-        
+
         for line in thinking_content.lines() {
             if line.is_empty() {
                 wrapped_lines.push(String::new());
@@ -442,7 +439,7 @@ fn render_thinking_section(frame: &mut Frame, area: Rect, app: &App, theme: &The
                 wrapped_lines.extend(wrap_words(line, max_width));
             }
         }
-        
+
         // Get last 3 lines
         let start = wrapped_lines.len().saturating_sub(3);
         wrapped_lines.into_iter().skip(start).collect()
@@ -450,18 +447,20 @@ fn render_thinking_section(frame: &mut Frame, area: Rect, app: &App, theme: &The
 
     // Build the thinking panel content
     let mut lines = vec![Line::from(divider_spans)];
-    
+
     // Add up to 3 lines of content
     for line_text in content_lines.iter().take(3) {
         lines.push(Line::from(vec![
             Span::styled(" ", Style::default()), // Left padding
             Span::styled(
                 line_text.clone(),
-                Style::default().fg(theme.colors.muted).add_modifier(Modifier::DIM),
+                Style::default()
+                    .fg(theme.colors.muted)
+                    .add_modifier(Modifier::DIM),
             ),
         ]));
     }
-    
+
     // Pad to 3 lines if needed
     while lines.len() < 4 {
         lines.push(Line::from(""));
@@ -471,7 +470,10 @@ fn render_thinking_section(frame: &mut Frame, area: Rect, app: &App, theme: &The
 }
 
 /// Render the Chat panel.
-#[expect(clippy::too_many_lines, reason = "UI rendering function with many visual components")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "UI rendering function with many visual components"
+)]
 fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let is_focused = app.focus() == PanelFocus::Chat;
     let border_color = if is_focused {
@@ -493,18 +495,19 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let show_thinking_section = app.is_thinking() || !app.thinking_content().is_empty();
 
     // Split inner area: messages area and thinking section
-    let (messages_area, thinking_area) = if show_thinking_section && inner.height > thinking_section_height + 3 {
-        let split = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(3),
-                Constraint::Length(thinking_section_height),
-            ])
-            .split(inner);
-        (split[0], Some(split[1]))
-    } else {
-        (inner, None)
-    };
+    let (messages_area, thinking_area) =
+        if show_thinking_section && inner.height > thinking_section_height + 3 {
+            let split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(3),
+                    Constraint::Length(thinking_section_height),
+                ])
+                .split(inner);
+            (split[0], Some(split[1]))
+        } else {
+            (inner, None)
+        };
 
     // Render thinking section if visible
     if let Some(think_area) = thinking_area {
@@ -564,7 +567,7 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         // Use the message's stored timestamp
         let timestamp = message.timestamp_local();
 
-        // Calculate prefix width: "[HH:MM:SS] <NICK> " 
+        // Calculate prefix width: "[HH:MM:SS] <NICK> "
         // "[HH:MM:SS] " = 11 chars, "<NICK>" = nick.len() + 2 chars, " " = 1 char
         let prefix_width = 11 + nick.len() + 2 + 1; // e.g., "[12:34:56] <YOU> " = 17, "<AURA> " = 18
 
@@ -574,10 +577,10 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         let continuation_width = content_width.saturating_sub(prefix_width);
 
         let mut is_first_output_line = true;
-        
+
         // Parse content into segments (regular text or code blocks)
         let segments = parse_content_segments(message.content());
-        
+
         for segment in segments {
             match segment {
                 ContentSegment::Text(text) => {
@@ -590,7 +593,10 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
                                         format!("[{timestamp}] "),
                                         Style::default().fg(theme.colors.muted),
                                     ),
-                                    Span::styled(format!("<{nick}>"), Style::default().fg(nick_color)),
+                                    Span::styled(
+                                        format!("<{nick}>"),
+                                        Style::default().fg(nick_color),
+                                    ),
                                 ]));
                                 is_first_output_line = false;
                             } else {
@@ -600,9 +606,13 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
                         }
 
                         // Word-wrap the content line
-                        let wrap_width = if is_first_output_line { first_line_width } else { continuation_width };
+                        let wrap_width = if is_first_output_line {
+                            first_line_width
+                        } else {
+                            continuation_width
+                        };
                         let wrapped = wrap_words(content_line, wrap_width);
-                        
+
                         for wrapped_line in wrapped {
                             // Parse markdown for assistant messages
                             let base_style = Style::default().fg(msg_color);
@@ -611,7 +621,7 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
                             } else {
                                 vec![Span::styled(wrapped_line, base_style)]
                             };
-                            
+
                             if is_first_output_line {
                                 // First line: include timestamp and nick
                                 let mut line_spans = vec![
@@ -619,7 +629,10 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
                                         format!("[{timestamp}] "),
                                         Style::default().fg(theme.colors.muted),
                                     ),
-                                    Span::styled(format!("<{nick}>"), Style::default().fg(nick_color)),
+                                    Span::styled(
+                                        format!("<{nick}>"),
+                                        Style::default().fg(nick_color),
+                                    ),
                                     Span::raw(" "),
                                 ];
                                 line_spans.extend(content_spans);
@@ -647,24 +660,27 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
                         ]));
                         is_first_output_line = false;
                     }
-                    
+
                     // Add padding before code block
                     lines.push(Line::from(""));
-                    
+
                     // Render the code block with syntax highlighting
                     let code_block = CodeBlock::new(&language, &code);
                     let code_lines = code_block.render(theme, continuation_width);
-                    
+
                     // Add code block lines with proper indentation
                     let indent = " ".repeat(prefix_width);
                     for code_line in code_lines {
                         let mut line_spans = vec![Span::raw(indent.clone())];
-                        line_spans.extend(code_line.spans.into_iter().map(|s| {
-                            Span::styled(s.content.to_string(), s.style)
-                        }));
+                        line_spans.extend(
+                            code_line
+                                .spans
+                                .into_iter()
+                                .map(|s| Span::styled(s.content.to_string(), s.style)),
+                        );
                         lines.push(Line::from(line_spans));
                     }
-                    
+
                     // Add padding after code block
                     lines.push(Line::from(""));
                 }
@@ -679,14 +695,14 @@ fn render_chat_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     // scroll_offset>0 means we want to see older content (scroll up)
     let visible_height = padded.height as usize;
     let scroll_offset = app.scroll_offset();
-    
+
     // Calculate the starting line:
     // - Without scroll: start from (total - visible_height) to show newest at bottom
     // - With scroll: subtract scroll_offset to show older content
     let total_lines = lines.len();
     let bottom_start = total_lines.saturating_sub(visible_height);
     let start = bottom_start.saturating_sub(scroll_offset);
-    
+
     let visible_lines: Vec<Line> = lines.into_iter().skip(start).take(visible_height).collect();
 
     let paragraph = Paragraph::new(visible_lines);
@@ -897,6 +913,8 @@ fn render_swarm_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
 
 /// Render the Record panel.
 fn render_record_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+    use crate::events::RecordStatus;
+
     let is_focused = app.focus() == PanelFocus::Records;
     let border_color = if is_focused {
         theme.colors.primary
@@ -960,7 +978,6 @@ fn render_record_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
         };
 
         // Status indicator with color coding (extra spacing around emoji for terminal rendering)
-        use crate::events::RecordStatus;
         let (status_text, status_color) = match record.status {
             RecordStatus::Ok => (" ✓ ", theme.colors.success),
             RecordStatus::Error => (" ✗ ", theme.colors.error),
@@ -968,7 +985,9 @@ fn render_record_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
             RecordStatus::None => (" · ", theme.colors.muted),
         };
         let status_style = if is_selected && is_focused {
-            Style::default().fg(status_color).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(status_color)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(status_color)
         };
@@ -977,12 +996,15 @@ fn render_record_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
         // prefix=1, seq=4, space+time+space=12, status=3 (with spacing), type=8, space=1 = 29 fixed chars
         let fixed_width = 29usize;
         let available_info_width = (inner.width as usize).saturating_sub(fixed_width);
-        
+
         // Truncate info to fit available width
         let info_display = if record.info.is_empty() {
             String::new()
         } else if record.info.len() > available_info_width && available_info_width > 3 {
-            format!("{}…", &record.info[..available_info_width.saturating_sub(1)])
+            format!(
+                "{}…",
+                &record.info[..available_info_width.saturating_sub(1)]
+            )
         } else if record.info.len() > available_info_width {
             String::new()
         } else {
@@ -995,7 +1017,7 @@ fn render_record_panel(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) 
             Span::styled(format!(" {} ", record.timestamp), line_style),
             Span::styled(status_text, status_style),
             Span::styled(format!("{:<8}", record.tx_kind), line_style),
-            Span::styled(format!(" {}", info_display), hash_style),
+            Span::styled(format!(" {info_display}"), hash_style),
         ]));
     }
 
@@ -1048,7 +1070,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, left_of
         format!(" ◐  {status}")
     };
     // Use display width for proper Unicode handling
-    #[expect(clippy::cast_possible_truncation, reason = "status text is always short")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "status text is always short"
+    )]
     let status_len = display_width(&status_text) as u16;
 
     // Calculate available width for input (leave space for status on right, and apply offset)
@@ -1085,7 +1110,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, left_of
     // Position the cursor in the input area, not at the status
     if !is_thinking {
         // Apply left_offset + chat_padding, prompt "> " is 2 chars, then cursor_pos chars into input
-        #[expect(clippy::cast_possible_truncation, reason = "cursor position fits in terminal width")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "cursor position fits in terminal width"
+        )]
         let cursor_x = area.x + left_offset + chat_padding + 2 + cursor_pos as u16;
         let cursor_y = area.y;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -1130,12 +1158,10 @@ fn render_approval_modal(frame: &mut Frame, approval: &crate::app::PendingApprov
         .border_style(Style::default().fg(theme.colors.warning));
 
     let content = vec![
-        Line::from(vec![
-            Span::styled(
-                format!("{} wants to: ", approval.tool),
-                Style::default().fg(theme.colors.foreground),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            format!("{} wants to: ", approval.tool),
+            Style::default().fg(theme.colors.foreground),
+        )]),
         Line::from(Span::styled(
             &approval.description,
             Style::default().fg(theme.colors.muted),
@@ -1230,25 +1256,29 @@ fn render_help_overlay(frame: &mut Frame, theme: &Theme) {
 }
 
 /// Render the record detail overlay.
+#[allow(clippy::too_many_lines)]
 fn render_record_detail(frame: &mut Frame, app: &App, theme: &Theme) {
+    use crate::events::RecordStatus;
+
     let Some(record) = app.selected_record_data() else {
         return;
     };
 
     let area = frame.area();
     let modal_width = 70.min(area.width.saturating_sub(4));
-    // Calculate needed height based on content
     let has_error = !record.error_details.is_empty();
     let has_info = !record.info.is_empty();
-    let base_height = 24u16; // Increased to fit Transaction fields
-    let error_lines = if has_error { 3 + (record.error_details.len() / 60) as u16 } else { 0 };
+    let base_height = 24u16;
+    #[allow(clippy::cast_possible_truncation)]
+    let error_lines = if has_error {
+        3 + (record.error_details.len() / 60) as u16
+    } else {
+        0
+    };
     let modal_height = (base_height + error_lines).min(area.height.saturating_sub(4));
 
     let modal_area = centered_rect(modal_width, modal_height, area);
     frame.render_widget(Clear, modal_area);
-
-    // Status indicator for title (extra spacing around emoji for terminal rendering)
-    use crate::events::RecordStatus;
     let (status_icon, status_color) = match record.status {
         RecordStatus::Ok => (" ✓ ", theme.colors.success),
         RecordStatus::Error => (" ✗ ", theme.colors.error),
@@ -1291,7 +1321,10 @@ fn render_record_detail(frame: &mut Frame, app: &App, theme: &Theme) {
     ]));
     content.push(Line::from(vec![
         Span::styled("agent_id:    ", Style::default().fg(theme.colors.muted)),
-        Span::styled(&record.agent_id, Style::default().fg(theme.colors.secondary)),
+        Span::styled(
+            &record.agent_id,
+            Style::default().fg(theme.colors.secondary),
+        ),
     ]));
     content.push(Line::from(vec![
         Span::styled("ts_ms:       ", Style::default().fg(theme.colors.muted)),
@@ -1306,7 +1339,10 @@ fn render_record_detail(frame: &mut Frame, app: &App, theme: &Theme) {
     ]));
     content.push(Line::from(vec![
         Span::styled("kind:        ", Style::default().fg(theme.colors.muted)),
-        Span::styled(&record.tx_kind, Style::default().fg(theme.colors.foreground)),
+        Span::styled(
+            &record.tx_kind,
+            Style::default().fg(theme.colors.foreground),
+        ),
     ]));
 
     // Show info if present (tool name, command, etc.)
@@ -1368,7 +1404,10 @@ fn render_record_detail(frame: &mut Frame, app: &App, theme: &Theme) {
     }
 
     content.push(Line::from(""));
-    content.push(Line::from(Span::styled("Message:", Style::default().fg(theme.colors.muted))));
+    content.push(Line::from(Span::styled(
+        "Message:",
+        Style::default().fg(theme.colors.muted),
+    )));
 
     // Parse message content with markdown support (same as chat messages)
     let base_style = Style::default().fg(theme.colors.foreground);
@@ -1402,7 +1441,9 @@ fn render_notification(
 ) {
     let area = frame.area();
     let msg_width = u16::try_from(display_width(msg)).unwrap_or(u16::MAX);
-    let toast_width = msg_width.saturating_add(6).min(area.width.saturating_sub(4));
+    let toast_width = msg_width
+        .saturating_add(6)
+        .min(area.width.saturating_sub(4));
 
     // Position at top-right
     let toast_area = Rect {
@@ -1576,10 +1617,14 @@ mod tests {
 
         let spans = parse_markdown_inline("hello **bold** world", base_style, &theme);
         assert!(spans.len() >= 3); // "hello ", "bold", " world"
-        // Find the bold span
+                                   // Find the bold span
         let bold_span = spans.iter().find(|s| s.content.as_ref() == "bold");
         assert!(bold_span.is_some());
-        assert!(bold_span.unwrap().style.add_modifier.contains(Modifier::BOLD));
+        assert!(bold_span
+            .unwrap()
+            .style
+            .add_modifier
+            .contains(Modifier::BOLD));
     }
 
     #[test]
@@ -1592,7 +1637,11 @@ mod tests {
         // Find the italic span
         let italic_span = spans.iter().find(|s| s.content.as_ref() == "italic");
         assert!(italic_span.is_some());
-        assert!(italic_span.unwrap().style.add_modifier.contains(Modifier::ITALIC));
+        assert!(italic_span
+            .unwrap()
+            .style
+            .add_modifier
+            .contains(Modifier::ITALIC));
     }
 
     #[test]
@@ -1675,7 +1724,12 @@ mod tests {
 
     #[test]
     fn test_centered_rect_normal() {
-        let area = Rect { x: 0, y: 0, width: 100, height: 50 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 50,
+        };
         let result = centered_rect(20, 10, area);
 
         assert_eq!(result.width, 20);
@@ -1686,7 +1740,12 @@ mod tests {
 
     #[test]
     fn test_centered_rect_larger_than_area() {
-        let area = Rect { x: 0, y: 0, width: 50, height: 30 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 50,
+            height: 30,
+        };
         let result = centered_rect(100, 50, area);
 
         // Should be clamped to area size
@@ -1696,7 +1755,12 @@ mod tests {
 
     #[test]
     fn test_centered_rect_with_offset() {
-        let area = Rect { x: 10, y: 5, width: 100, height: 50 };
+        let area = Rect {
+            x: 10,
+            y: 5,
+            width: 100,
+            height: 50,
+        };
         let result = centered_rect(20, 10, area);
 
         assert_eq!(result.x, 50); // 10 + (100 - 20) / 2

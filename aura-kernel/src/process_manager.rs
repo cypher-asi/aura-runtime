@@ -1,9 +1,11 @@
 //! Process Manager for async command execution.
 //!
-//! The ProcessManager tracks long-running processes that exceed the sync threshold
+//! The `ProcessManager` tracks long-running processes that exceed the sync threshold
 //! and creates completion transactions when they finish.
 
-use aura_core::{ActionId, ActionResultPayload, AgentId, Hash, ProcessId, ProcessPending, Transaction};
+use aura_core::{
+    ActionId, ActionResultPayload, AgentId, Hash, ProcessId, ProcessPending, Transaction,
+};
 use dashmap::DashMap;
 use std::process::Child;
 use std::sync::Arc;
@@ -37,7 +39,7 @@ pub struct RunningProcess {
     pub agent_id: AgentId,
     /// Unique process identifier.
     pub process_id: ProcessId,
-    /// The originating transaction's hash (for reference_tx_hash).
+    /// The originating transaction's hash (for `reference_tx_hash`).
     pub reference_tx_hash: Hash,
     /// The command being executed.
     pub command: String,
@@ -64,7 +66,7 @@ pub struct ProcessOutput {
 
 /// Manages long-running processes and creates completion transactions.
 pub struct ProcessManager {
-    /// Running processes indexed by process_id.
+    /// Running processes indexed by `process_id`.
     processes: DashMap<ProcessId, RunningProcess>,
     /// Channel to send completion transactions.
     tx_sender: mpsc::Sender<Transaction>,
@@ -74,6 +76,7 @@ pub struct ProcessManager {
 
 impl ProcessManager {
     /// Create a new process manager.
+    #[must_use]
     pub fn new(tx_sender: mpsc::Sender<Transaction>, config: ProcessManagerConfig) -> Self {
         Self {
             processes: DashMap::new(),
@@ -83,6 +86,7 @@ impl ProcessManager {
     }
 
     /// Create a process manager with default config.
+    #[must_use]
     pub fn with_defaults(tx_sender: mpsc::Sender<Transaction>) -> Self {
         Self::new(tx_sender, ProcessManagerConfig::default())
     }
@@ -108,7 +112,7 @@ impl ProcessManager {
             agent_id,
             process_id,
             reference_tx_hash,
-            command: command.clone(),
+            command,
             started_at: Instant::now(),
             child,
         };
@@ -129,13 +133,9 @@ impl ProcessManager {
         let poll_interval = Duration::from_millis(self.config.poll_interval_ms);
 
         loop {
-            // Check if process is still registered (might be cancelled)
-            let mut process = match self.processes.get_mut(&process_id) {
-                Some(p) => p,
-                None => {
-                    debug!("Process no longer registered");
-                    return;
-                }
+            let Some(mut process) = self.processes.get_mut(&process_id) else {
+                debug!("Process no longer registered");
+                return;
             };
 
             // Check for timeout
@@ -147,13 +147,17 @@ impl ProcessManager {
 
                 // Remove and send failure
                 if let Some((_, running)) = self.processes.remove(&process_id) {
-                    self.send_completion(running, ProcessOutput {
-                        exit_code: None,
-                        stdout: Vec::new(),
-                        stderr: b"Process timed out".to_vec(),
-                        success: false,
-                        duration_ms: max_duration.as_millis() as u64,
-                    })
+                    self.send_completion(
+                        running,
+                        ProcessOutput {
+                            exit_code: None,
+                            stdout: Vec::new(),
+                            stderr: b"Process timed out".to_vec(),
+                            success: false,
+                            #[allow(clippy::cast_possible_truncation)]
+                            duration_ms: max_duration.as_millis() as u64,
+                        },
+                    )
                     .await;
                 }
                 return;
@@ -163,6 +167,7 @@ impl ProcessManager {
             match process.child.try_wait() {
                 Ok(Some(status)) => {
                     // Process finished
+                    #[allow(clippy::cast_possible_truncation)]
                     let duration_ms = process.started_at.elapsed().as_millis() as u64;
                     let exit_code = status.code();
                     let success = status.success();
@@ -176,13 +181,16 @@ impl ProcessManager {
 
                         info!(exit_code = ?exit_code, success = success, duration_ms = duration_ms, "Process completed");
 
-                        self.send_completion(running, ProcessOutput {
-                            exit_code,
-                            stdout,
-                            stderr,
-                            success,
-                            duration_ms,
-                        })
+                        self.send_completion(
+                            running,
+                            ProcessOutput {
+                                exit_code,
+                                stdout,
+                                stderr,
+                                success,
+                                duration_ms,
+                            },
+                        )
                         .await;
                     }
                     return;
@@ -265,7 +273,7 @@ impl ProcessManager {
         }
     }
 
-    /// Create a ProcessPending payload for a newly registered process.
+    /// Create a `ProcessPending` payload for a newly registered process.
     #[must_use]
     pub fn create_pending_payload(process_id: ProcessId, command: &str) -> ProcessPending {
         ProcessPending::new(process_id, command)
@@ -334,7 +342,10 @@ mod tests {
             .expect("Timeout waiting for completion")
             .expect("Channel closed");
 
-        assert_eq!(completion.tx_type, aura_core::TransactionType::ProcessComplete);
+        assert_eq!(
+            completion.tx_type,
+            aura_core::TransactionType::ProcessComplete
+        );
         assert_eq!(completion.reference_tx_hash, Some(reference_hash));
     }
 
@@ -381,7 +392,7 @@ mod tests {
 
         // All processes should have been registered
         // (they may complete very quickly, so we just verify we can register multiple)
-        
+
         // Wait for all completion transactions
         let mut completions = Vec::new();
         for _ in 0..3 {
@@ -394,7 +405,10 @@ mod tests {
 
         // All completions should be ProcessComplete type
         for completion in &completions {
-            assert_eq!(completion.tx_type, aura_core::TransactionType::ProcessComplete);
+            assert_eq!(
+                completion.tx_type,
+                aura_core::TransactionType::ProcessComplete
+            );
             assert_eq!(completion.reference_tx_hash, Some(reference_hash));
         }
     }
@@ -447,9 +461,12 @@ mod tests {
             .expect("Channel closed");
 
         // Should be a failed completion due to timeout
-        assert_eq!(completion.tx_type, aura_core::TransactionType::ProcessComplete);
+        assert_eq!(
+            completion.tx_type,
+            aura_core::TransactionType::ProcessComplete
+        );
         assert_eq!(completion.reference_tx_hash, Some(reference_hash));
-        
+
         // The payload should indicate failure
         let payload: ActionResultPayload = serde_json::from_slice(&completion.payload).unwrap();
         assert!(!payload.success);
@@ -500,7 +517,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         // Process may have already completed, so we just check it doesn't panic
         let _ = manager.running_count();
-        
+
         // Cancel it so the test doesn't wait
         let _ = manager.cancel(&process_id);
     }
@@ -560,9 +577,9 @@ mod tests {
     fn test_create_pending_payload() {
         let process_id = ProcessId::generate();
         let command = "echo hello";
-        
+
         let payload = ProcessManager::create_pending_payload(process_id, command);
-        
+
         assert_eq!(payload.process_id, process_id);
         assert_eq!(payload.command, command);
     }

@@ -138,7 +138,7 @@ mod key_tests {
             let agent_id = AgentId::new(agent_bytes);
             let key1 = RecordKey::new(agent_id, seq1).encode();
             let key2 = RecordKey::new(agent_id, seq2).encode();
-            
+
             if seq1 < seq2 {
                 prop_assert!(key1 < key2);
             } else if seq1 > seq2 {
@@ -164,7 +164,7 @@ mod key_tests {
             let agent_id = AgentId::new(agent_bytes);
             let key1 = InboxKey::new(agent_id, seq1).encode();
             let key2 = InboxKey::new(agent_id, seq2).encode();
-            
+
             if seq1 < seq2 {
                 prop_assert!(key1 < key2);
             } else if seq1 > seq2 {
@@ -178,7 +178,7 @@ mod key_tests {
     #[test]
     fn agent_meta_key_roundtrip_all_fields() {
         let agent_id = AgentId::generate();
-        
+
         for field in [
             MetaField::HeadSeq,
             MetaField::InboxHead,
@@ -224,7 +224,7 @@ mod serialization_tests {
                 Bytes::from(payload),
                 None,
             );
-            
+
             let json = serde_json::to_string(&tx).unwrap();
             let parsed: Transaction = serde_json::from_str(&json).unwrap();
             prop_assert_eq!(tx, parsed);
@@ -235,7 +235,7 @@ mod serialization_tests {
         fn tool_call_json_roundtrip(tool: String, path: String) {
             prop_assume!(!tool.is_empty());
             let tool_call = ToolCall::new(&tool, serde_json::json!({ "path": path }));
-            
+
             let json = serde_json::to_string(&tool_call).unwrap();
             let parsed: ToolCall = serde_json::from_str(&json).unwrap();
             prop_assert_eq!(tool_call, parsed);
@@ -250,7 +250,7 @@ mod serialization_tests {
             } else {
                 ToolResult::failure(&tool, output.clone())
             };
-            
+
             let json = serde_json::to_string(&result).unwrap();
             let parsed: ToolResult = serde_json::from_str(&json).unwrap();
             prop_assert_eq!(result, parsed);
@@ -272,7 +272,7 @@ mod serialization_tests {
             if let Some(r) = rationale {
                 proposal = proposal.with_rationale(r);
             }
-            
+
             let json = serde_json::to_string(&proposal).unwrap();
             let parsed: Proposal = serde_json::from_str(&json).unwrap();
             prop_assert_eq!(proposal, parsed);
@@ -285,15 +285,15 @@ mod serialization_tests {
             num_rejected in 0usize..5
         ) {
             let mut decision = Decision::new();
-            
+
             for _ in 0..num_accepted {
                 decision.accept(aura_core::ActionId::generate());
             }
-            
+
             for i in 0..num_rejected {
                 decision.reject(i as u32, format!("Reason {i}"));
             }
-            
+
             let json = serde_json::to_string(&decision).unwrap();
             let parsed: Decision = serde_json::from_str(&json).unwrap();
             prop_assert_eq!(decision, parsed);
@@ -323,10 +323,10 @@ mod sandbox_tests {
         fn safe_path_stays_in_sandbox(components in prop::collection::vec(safe_path_component(), 1..4)) {
             let dir = TempDir::new().unwrap();
             let sandbox = Sandbox::new(dir.path()).unwrap();
-            
+
             let path = components.join("/");
             let resolved = sandbox.resolve(&path);
-            
+
             // Should succeed (path is within sandbox)
             prop_assert!(resolved.is_ok());
             prop_assert!(resolved.unwrap().starts_with(sandbox.root()));
@@ -337,11 +337,11 @@ mod sandbox_tests {
         fn dotdot_escape_blocked(depth in 1usize..10) {
             let dir = TempDir::new().unwrap();
             let sandbox = Sandbox::new(dir.path()).unwrap();
-            
+
             // Create a path that tries to escape
             let path = "../".repeat(depth) + "etc/passwd";
             let resolved = sandbox.resolve(&path);
-            
+
             // Should fail (escapes sandbox)
             prop_assert!(resolved.is_err());
         }
@@ -404,7 +404,7 @@ mod hash_chain_tests {
         #[test]
         fn prop_hash_chained_deterministic(content: Vec<u8>, prev_content: Vec<u8>) {
             let prev_hash = Hash::from_content(&prev_content);
-            
+
             let hash1 = Hash::from_content_chained(&content, Some(&prev_hash));
             let hash2 = Hash::from_content_chained(&content, Some(&prev_hash));
             prop_assert_eq!(hash1, hash2);
@@ -415,15 +415,15 @@ mod hash_chain_tests {
         fn prop_hash_chain_order_matters(content1: Vec<u8>, content2: Vec<u8>) {
             prop_assume!(!content1.is_empty() && !content2.is_empty());
             prop_assume!(content1 != content2);
-            
+
             // Chain: content1 -> content2
             let hash1 = Hash::from_content(&content1);
             let chain1_final = Hash::from_content_chained(&content2, Some(&hash1));
-            
+
             // Chain: content2 -> content1
             let hash2 = Hash::from_content(&content2);
             let chain2_final = Hash::from_content_chained(&content1, Some(&hash2));
-            
+
             // Different orderings should produce different final hashes
             prop_assert_ne!(chain1_final, chain2_final);
         }
@@ -432,7 +432,7 @@ mod hash_chain_tests {
         #[test]
         fn prop_hash_content_sensitive(content1: Vec<u8>, content2: Vec<u8>) {
             prop_assume!(content1 != content2);
-            
+
             let hash1 = Hash::from_content(&content1);
             let hash2 = Hash::from_content(&content2);
             prop_assert_ne!(hash1, hash2);
@@ -442,13 +442,13 @@ mod hash_chain_tests {
         #[test]
         fn prop_hash_chain_depends_on_prev(content: Vec<u8>, prev1: Vec<u8>, prev2: Vec<u8>) {
             prop_assume!(prev1 != prev2);
-            
+
             let prev_hash1 = Hash::from_content(&prev1);
             let prev_hash2 = Hash::from_content(&prev2);
-            
+
             let chained1 = Hash::from_content_chained(&content, Some(&prev_hash1));
             let chained2 = Hash::from_content_chained(&content, Some(&prev_hash2));
-            
+
             // Same content but different prev should produce different hash
             prop_assert_ne!(chained1, chained2);
         }
@@ -457,10 +457,10 @@ mod hash_chain_tests {
         #[test]
         fn prop_genesis_differs_from_chained(content: Vec<u8>, prev_content: Vec<u8>) {
             let prev_hash = Hash::from_content(&prev_content);
-            
+
             let genesis = Hash::from_content(&content);
             let chained = Hash::from_content_chained(&content, Some(&prev_hash));
-            
+
             // Genesis and chained should differ (unless prev_hash happens to be all zeros,
             // but that's astronomically unlikely with random content)
             prop_assert_ne!(genesis, chained);
@@ -505,19 +505,19 @@ mod transaction_chain_tests {
         ) {
             prop_assume!(!msg1.is_empty() && !msg2.is_empty() && !msg3.is_empty());
             prop_assume!(msg1 != tampered_msg1);
-            
+
             let agent_id = AgentId::generate();
-            
+
             // Original chain
             let tx1 = Transaction::user_prompt(agent_id, msg1.clone());
             let tx2 = Transaction::user_prompt_chained(agent_id, msg2.clone(), &tx1.hash);
             let tx3 = Transaction::user_prompt_chained(agent_id, msg3.clone(), &tx2.hash);
-            
+
             // Tampered chain (different first message)
             let tampered_tx1 = Transaction::user_prompt(agent_id, tampered_msg1);
             let tampered_tx2 = Transaction::user_prompt_chained(agent_id, msg2.clone(), &tampered_tx1.hash);
             let tampered_tx3 = Transaction::user_prompt_chained(agent_id, msg3.clone(), &tampered_tx2.hash);
-            
+
             // All hashes should differ due to chain integrity
             prop_assert_ne!(tx1.hash, tampered_tx1.hash);
             prop_assert_ne!(tx2.hash, tampered_tx2.hash);
@@ -528,12 +528,12 @@ mod transaction_chain_tests {
         #[test]
         fn prop_reference_tx_hash_preserved(payload: Vec<u8>) {
             use aura_core::{ActionId, ActionResultPayload, ProcessId};
-            
+
             let agent_id = AgentId::generate();
-            
+
             // Create original transaction
             let orig_tx = Transaction::user_prompt(agent_id, payload.clone());
-            
+
             // Create a callback transaction that references the original
             // Using process_complete which sets reference_tx_hash
             let result_payload = ActionResultPayload::success(
@@ -549,10 +549,10 @@ mod transaction_chain_tests {
                 orig_tx.hash,
                 Some(&orig_tx.hash), // prev_hash
             );
-            
+
             // Reference should be preserved
             prop_assert_eq!(callback_tx.reference_tx_hash, Some(orig_tx.hash));
-            
+
             // Serialization roundtrip should preserve reference
             let json = serde_json::to_string(&callback_tx).unwrap();
             let parsed: Transaction = serde_json::from_str(&json).unwrap();
@@ -563,10 +563,10 @@ mod transaction_chain_tests {
         #[test]
         fn prop_transaction_deterministic(payload: Vec<u8>) {
             let agent_id = AgentId::generate();
-            
+
             let tx1 = Transaction::user_prompt(agent_id, payload.clone());
             let tx2 = Transaction::user_prompt(agent_id, payload);
-            
+
             prop_assert_eq!(tx1.hash, tx2.hash);
         }
 
@@ -574,16 +574,16 @@ mod transaction_chain_tests {
         #[test]
         fn prop_chained_differs_from_genesis(payload: Vec<u8>, prev_payload: Vec<u8>) {
             let agent_id = AgentId::generate();
-            
+
             // Genesis transaction
             let genesis = Transaction::user_prompt(agent_id, payload.clone());
-            
+
             // Create a prev transaction to chain from
             let prev_tx = Transaction::user_prompt(agent_id, prev_payload);
-            
+
             // Chained transaction with same payload
             let chained = Transaction::user_prompt_chained(agent_id, payload, &prev_tx.hash);
-            
+
             // Should produce different hashes
             prop_assert_ne!(genesis.hash, chained.hash);
         }
@@ -603,7 +603,7 @@ mod transaction_chain_tests {
             let json1 = serde_json::to_string(&tx_type).unwrap();
             let parsed: TransactionType = serde_json::from_str(&json1).unwrap();
             let json2 = serde_json::to_string(&parsed).unwrap();
-            
+
             prop_assert_eq!(json1, json2);
             prop_assert_eq!(tx_type, parsed);
         }

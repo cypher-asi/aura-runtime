@@ -9,10 +9,7 @@ use aura_core::{AgentId, Transaction, TransactionType};
 use aura_reasoner::{ModelProvider, Reasoner};
 use aura_store::Store;
 use axum::{
-    extract::{
-        ws::WebSocketUpgrade,
-        Path, Query, State,
-    },
+    extract::{ws::WebSocketUpgrade, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},

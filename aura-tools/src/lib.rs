@@ -15,6 +15,14 @@
 
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::missing_const_for_fn,
+    clippy::must_use_candidate,
+    clippy::unnecessary_literal_bound,
+    clippy::option_if_let_else,
+    clippy::doc_markdown
+)]
 
 mod error;
 mod executor;
@@ -24,9 +32,9 @@ pub mod registry;
 mod sandbox;
 pub mod tool;
 
+pub use aura_core::ExternalToolDefinition;
 pub use error::ToolError;
 pub use executor::ToolExecutor;
-pub use aura_core::ExternalToolDefinition;
 pub use fs_tools::{cmd_run_with_threshold, cmd_spawn, output_to_tool_result, ThresholdResult};
 pub use registry::{DefaultToolRegistry, ToolRegistry};
 pub use sandbox::Sandbox;
@@ -58,8 +66,8 @@ impl Default for ToolConfig {
             enable_commands: true, // Enabled by default for agentic workflows
             command_allowlist: vec![], // Empty = all commands allowed
             max_read_bytes: 5 * 1024 * 1024, // 5MB
-            sync_threshold_ms: 5_000,         // 5s sync threshold
-            max_async_timeout_ms: 600_000,    // 10 minutes async timeout
+            sync_threshold_ms: 5_000, // 5s sync threshold
+            max_async_timeout_ms: 600_000, // 10 minutes async timeout
         }
     }
 }

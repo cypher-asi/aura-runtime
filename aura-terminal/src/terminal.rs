@@ -5,7 +5,10 @@
 use crate::{layout::LayoutMode, renderer, App, Theme};
 use crossterm::{
     cursor::{SetCursorStyle, Show},
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -205,7 +208,11 @@ impl Drop for Terminal {
         if let Err(e) = disable_raw_mode() {
             error!("Failed to disable raw mode: {}", e);
         }
-        if let Err(e) = execute!(self.inner.backend_mut(), DisableMouseCapture, LeaveAlternateScreen) {
+        if let Err(e) = execute!(
+            self.inner.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        ) {
             error!("Failed to leave alternate screen: {}", e);
         }
     }

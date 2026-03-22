@@ -171,12 +171,11 @@ pub fn fs_write(
     fs::write(&resolved, content)?;
 
     let bytes_written = content.len();
-    Ok(ToolResult::success(
-        "fs_write",
-        format!("Wrote {bytes_written} bytes to {path}"),
+    Ok(
+        ToolResult::success("fs_write", format!("Wrote {bytes_written} bytes to {path}"))
+            .with_metadata("bytes_written", bytes_written.to_string())
+            .with_metadata("file_existed", file_existed.to_string()),
     )
-    .with_metadata("bytes_written", bytes_written.to_string())
-    .with_metadata("file_existed", file_existed.to_string()))
 }
 
 /// Edit a file by replacing text.
@@ -247,10 +246,7 @@ pub fn search_code(
     let file_pattern_regex = file_pattern
         .map(|p| {
             // Convert glob-like pattern to regex
-            let regex_pattern = p
-                .replace('.', r"\.")
-                .replace('*', ".*")
-                .replace('?', ".");
+            let regex_pattern = p.replace('.', r"\.").replace('*', ".*").replace('?', ".");
             Regex::new(&format!("^{regex_pattern}$"))
         })
         .transpose()
@@ -274,14 +270,20 @@ pub fn search_code(
 
         // Check file pattern filter
         if let Some(ref fp_regex) = file_pattern_regex {
-            let file_name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let file_name = entry_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
             if !fp_regex.is_match(file_name) {
                 continue;
             }
         }
 
         // Skip binary files (simple heuristic)
-        let extension = entry_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let extension = entry_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
         let text_extensions = [
             "rs", "ts", "js", "py", "go", "java", "c", "cpp", "h", "hpp", "md", "txt", "json",
             "yaml", "yml", "toml", "xml", "html", "css", "sql", "sh", "bat", "ps1",
@@ -325,9 +327,7 @@ pub fn fs_delete(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError>
     debug!(?resolved, "Deleting file");
 
     if !resolved.is_file() {
-        return Err(ToolError::InvalidArguments(format!(
-            "{path} is not a file"
-        )));
+        return Err(ToolError::InvalidArguments(format!("{path} is not a file")));
     }
 
     fs::remove_file(&resolved)?;
@@ -359,9 +359,8 @@ pub fn fs_find(
 
     debug!(?search_root, "Finding files");
 
-    let glob_pattern = Pattern::new(pattern).map_err(|e| {
-        ToolError::InvalidArguments(format!("Invalid glob pattern: {e}"))
-    })?;
+    let glob_pattern = Pattern::new(pattern)
+        .map_err(|e| ToolError::InvalidArguments(format!("Invalid glob pattern: {e}")))?;
 
     let max_results = max_results.min(200);
     let mut results = Vec::new();
@@ -390,18 +389,21 @@ pub fn fs_find(
                 }
                 walk(&path, root, pattern, results, max);
             } else {
-                let relative = path
-                    .strip_prefix(root)
-                    .unwrap_or(&path)
-                    .to_string_lossy();
-                if pattern.matches(&relative) || pattern.matches(&*name) {
+                let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy();
+                if pattern.matches(&relative) || pattern.matches(&name) {
                     results.push(relative.to_string());
                 }
             }
         }
     }
 
-    walk(&search_root, &search_root, &glob_pattern, &mut results, max_results);
+    walk(
+        &search_root,
+        &search_root,
+        &glob_pattern,
+        &mut results,
+        max_results,
+    );
 
     let output = if results.is_empty() {
         "No files found".to_string()
@@ -542,6 +544,7 @@ pub fn cmd_run(
 }
 
 /// Convert process output to a tool result.
+#[allow(clippy::needless_pass_by_value)]
 pub fn output_to_tool_result(output: std::process::Output) -> Result<ToolResult, ToolError> {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -652,7 +655,7 @@ fn wait_with_hard_timeout(
                 stderr,
             });
         }
-        
+
         if start.elapsed() > timeout {
             // Kill the process
             let _ = child.kill();
@@ -1028,7 +1031,9 @@ impl Tool for FsDeleteTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "fs_delete".into(),
-            description: "Delete a file within the workspace. Only files can be deleted, not directories.".into(),
+            description:
+                "Delete a file within the workspace. Only files can be deleted, not directories."
+                    .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1135,7 +1140,9 @@ impl Tool for CmdRunTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "cmd_run".into(),
-            description: "Run a shell command. Accepts either 'command' (shell string) or 'program'+'args'.".into(),
+            description:
+                "Run a shell command. Accepts either 'command' (shell string) or 'program'+'args'."
+                    .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1685,7 +1692,11 @@ mod tests {
     fn test_search_code_simple_pattern() {
         let (sandbox, dir) = create_test_sandbox();
 
-        fs::write(dir.path().join("code.rs"), "fn main() { println!(\"hello\"); }").unwrap();
+        fs::write(
+            dir.path().join("code.rs"),
+            "fn main() { println!(\"hello\"); }",
+        )
+        .unwrap();
 
         let result = search_code(&sandbox, "fn main", None, None, 100).unwrap();
         assert!(result.ok);
@@ -1735,7 +1746,10 @@ mod tests {
     fn test_search_code_max_results() {
         let (sandbox, dir) = create_test_sandbox();
 
-        let content = (0..20).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let content = (0..20)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         fs::write(dir.path().join("many.txt"), content).unwrap();
 
         let result = search_code(&sandbox, "line", None, None, 5).unwrap();
@@ -1816,7 +1830,13 @@ mod tests {
 
         // Run a command that exits with non-zero status
         #[cfg(windows)]
-        let result = cmd_run(&sandbox, "cmd", &["/c".to_string(), "exit".to_string(), "1".to_string()], None, 5000);
+        let result = cmd_run(
+            &sandbox,
+            "cmd",
+            &["/c".to_string(), "exit".to_string(), "1".to_string()],
+            None,
+            5000,
+        );
         #[cfg(not(windows))]
         let result = cmd_run(&sandbox, "false", &[], None, 5000);
 
@@ -1899,7 +1919,10 @@ mod tests {
         match result {
             ThresholdResult::Pending(mut child) => {
                 // Verify we have a live child process
-                assert!(child.try_wait().unwrap().is_none(), "Child should still be running");
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "Child should still be running"
+                );
                 // Clean up - kill the process
                 let _ = child.kill();
                 let _ = child.wait();
@@ -1940,13 +1963,8 @@ mod tests {
     fn test_cmd_spawn_returns_command_string() {
         let (sandbox, _dir) = create_test_sandbox();
 
-        let (mut child, command) = cmd_spawn(
-            &sandbox,
-            "echo",
-            &["test_arg".to_string()],
-            None,
-        )
-        .unwrap();
+        let (mut child, command) =
+            cmd_spawn(&sandbox, "echo", &["test_arg".to_string()], None).unwrap();
 
         // Command string should include the program and args
         assert!(command.contains("echo"));
@@ -1971,9 +1989,7 @@ mod tests {
 
         #[cfg(not(windows))]
         let status = {
-            let output = std::process::Command::new("true")
-                .output()
-                .unwrap();
+            let output = std::process::Command::new("true").output().unwrap();
             output.status
         };
 
@@ -2002,9 +2018,7 @@ mod tests {
 
         #[cfg(not(windows))]
         let status = {
-            let output = std::process::Command::new("false")
-                .output()
-                .unwrap();
+            let output = std::process::Command::new("false").output().unwrap();
             output.status
         };
 
