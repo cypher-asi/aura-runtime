@@ -145,8 +145,11 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
     let kernel_executor =
         KernelToolExecutor::new(executor_router, identity.agent_id, agent_workspace);
 
+    let auth_token = std::env::var("AURA_ROUTER_JWT").ok();
+
     let config = AgentLoopConfig {
         system_prompt: TurnConfig::default().system_prompt,
+        auth_token: auth_token.clone(),
         ..AgentLoopConfig::default()
     };
     let agent_loop = AgentLoop::new(config);
@@ -170,15 +173,16 @@ async fn run_terminal(args: Args) -> anyhow::Result<()> {
         "mock" => {
             let _ = cmd_tx.try_send(UiCommand::SetStatus("Mock Mode".to_string()));
             Arc::new(MockProvider::simple_response(
-                "Mock mode: Set ANTHROPIC_API_KEY environment variable to enable real AI responses.",
+                "Mock mode: Set AURA_LLM_ROUTING and required credentials to enable real AI responses.",
             ))
         }
         _ => match AnthropicProvider::from_env() {
             Ok(p) => Arc::new(p),
-            Err(_e) => {
+            Err(e) => {
+                warn!(error = %e, "LLM provider not configured, using mock");
                 let _ = cmd_tx.try_send(UiCommand::SetStatus("Mock Mode".to_string()));
                 Arc::new(MockProvider::simple_response(
-                    "Mock mode: Set ANTHROPIC_API_KEY environment variable to enable real AI responses.",
+                    "Mock mode: Set AURA_LLM_ROUTING and required credentials to enable real AI responses.",
                 ))
             }
         },
