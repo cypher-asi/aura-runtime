@@ -1,13 +1,13 @@
 //! Event processing loop for the terminal UI mode.
 
 use crate::record_loader::extract_tool_info;
-use aura_agent::{AgentLoop, KernelToolExecutor};
+use aura_agent::{AgentLoop, AgentLoopEvent, KernelToolExecutor};
 use aura_core::{AgentId, EffectStatus, RecordEntry, Transaction, TransactionType};
 use aura_kernel::ProcessManager;
 use aura_reasoner::{Message, ModelProvider, ToolDefinition};
 use aura_store::{RocksStore, Store};
 use aura_terminal::{
-    events::{RecordStatus, RecordSummary},
+    events::{RecordStatus, RecordSummary, ToolData},
     UiCommand, UiEvent,
 };
 use std::sync::Arc;
@@ -138,9 +138,40 @@ pub(crate) async fn run_event_loop(ctx: EventLoopContext<'_>) -> anyhow::Result<
 
                 messages.push(Message::user(text));
 
+                let (agent_event_tx, agent_event_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<AgentLoopEvent>();
+
+                let fwd_commands = commands.clone();
+                let forwarder = tokio::spawn(
+                    forward_agent_events(agent_event_rx, fwd_commands),
+                );
+
                 let process_result = agent_loop
-                    .run(provider, executor, messages.clone(), tools.to_vec())
+                    .run_with_events(
+                        provider,
+                        executor,
+                        messages.clone(),
+                        tools.to_vec(),
+                        Some(agent_event_tx),
+                        None,
+                    )
                     .await;
+
+                let streamed_text = match forwarder.await {
+                    Ok(state) => {
+                        if state.thinking_active {
+                            let _ = commands.send(UiCommand::FinishThinking).await;
+                        }
+                        if state.streaming_active {
+                            let _ = commands.send(UiCommand::FinishStreaming).await;
+                        }
+                        state.had_text
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Event forwarder panicked");
+                        false
+                    }
+                };
 
                 match process_result {
                     Ok(result) => {
@@ -196,13 +227,15 @@ pub(crate) async fn run_event_loop(ctx: EventLoopContext<'_>) -> anyhow::Result<
                             let preview: String = result.total_text.chars().take(100).collect();
                             info!(response_preview = %preview, "Model response received");
 
-                            let _ = commands
-                                .send(UiCommand::ShowMessage(aura_terminal::events::MessageData {
-                                    role: aura_terminal::events::MessageRole::Assistant,
-                                    content: result.total_text.clone(),
-                                    is_streaming: false,
-                                }))
-                                .await;
+                            if !streamed_text {
+                                let _ = commands
+                                    .send(UiCommand::ShowMessage(aura_terminal::events::MessageData {
+                                        role: aura_terminal::events::MessageRole::Assistant,
+                                        content: result.total_text.clone(),
+                                        is_streaming: false,
+                                    }))
+                                    .await;
+                            }
                         }
 
                         if let Some(ref err) = result.llm_error {
@@ -475,4 +508,91 @@ fn create_response_transaction(agent_id: AgentId, response_text: &str) -> Transa
         response_text.as_bytes().to_vec(),
         None,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Streaming event forwarder
+// ---------------------------------------------------------------------------
+
+/// Tracks forwarder lifecycle so the caller can finalize streaming/thinking.
+struct ForwarderState {
+    streaming_active: bool,
+    thinking_active: bool,
+    had_text: bool,
+}
+
+/// Reads [`AgentLoopEvent`]s and translates them into [`UiCommand`]s.
+async fn forward_agent_events(
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<AgentLoopEvent>,
+    commands: mpsc::Sender<UiCommand>,
+) -> ForwarderState {
+    let mut state = ForwarderState {
+        streaming_active: false,
+        thinking_active: false,
+        had_text: false,
+    };
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            AgentLoopEvent::ThinkingDelta(text) => {
+                if !state.thinking_active {
+                    let _ = commands.send(UiCommand::StartThinking).await;
+                    state.thinking_active = true;
+                }
+                let _ = commands.send(UiCommand::AppendThinking(text)).await;
+            }
+            AgentLoopEvent::TextDelta(text) => {
+                if state.thinking_active {
+                    let _ = commands.send(UiCommand::FinishThinking).await;
+                    state.thinking_active = false;
+                }
+                if !state.streaming_active {
+                    let _ = commands.send(UiCommand::StartStreaming).await;
+                    state.streaming_active = true;
+                }
+                state.had_text = true;
+                let _ = commands.send(UiCommand::AppendText(text)).await;
+            }
+            AgentLoopEvent::ToolStart { id, name } => {
+                if state.thinking_active {
+                    let _ = commands.send(UiCommand::FinishThinking).await;
+                    state.thinking_active = false;
+                }
+                let _ = commands
+                    .send(UiCommand::ShowTool(ToolData {
+                        id,
+                        name,
+                        args: String::new(),
+                    }))
+                    .await;
+            }
+            AgentLoopEvent::ToolInputSnapshot { id, .. } => {
+                debug!(tool_id = %id, "Tool input streaming");
+            }
+            AgentLoopEvent::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                ..
+            } => {
+                let _ = commands
+                    .send(UiCommand::CompleteTool {
+                        id: tool_use_id,
+                        result: content,
+                        success: !is_error,
+                    })
+                    .await;
+            }
+            AgentLoopEvent::IterationComplete { .. } => {}
+            AgentLoopEvent::Warning(msg) => {
+                let _ = commands.send(UiCommand::ShowWarning(msg)).await;
+            }
+            AgentLoopEvent::Error { message, .. } => {
+                let _ = commands.send(UiCommand::ShowWarning(message)).await;
+            }
+            AgentLoopEvent::ToolComplete { .. } => {}
+        }
+    }
+
+    state
 }
