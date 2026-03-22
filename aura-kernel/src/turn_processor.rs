@@ -102,7 +102,7 @@ impl Default for TurnConfig {
             model_timeout_ms: 60_000,
             tool_timeout_ms: 30_000,
             context_window: 50,
-            model: "claude-opus-4-5-20251101".to_string(),
+            model: "claude-opus-4-6-20250514".to_string(),
             system_prompt: default_system_prompt(),
             workspace_base: PathBuf::from("./workspaces"),
             replay_mode: false,

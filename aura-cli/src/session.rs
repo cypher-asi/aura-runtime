@@ -318,12 +318,12 @@ mod tests {
         clear_all_env_vars();
 
         std::env::set_var("AURA_MAX_STEPS_PER_TURN", "20");
-        std::env::set_var("AURA_ANTHROPIC_MODEL", "claude-sonnet-4-20250514");
+        std::env::set_var("AURA_ANTHROPIC_MODEL", "claude-opus-4-6-20250514");
 
         let config = SessionConfig::from_env();
 
         assert_eq!(config.loop_config.max_iterations, 20);
-        assert_eq!(config.loop_config.model, "claude-sonnet-4-20250514");
+        assert_eq!(config.loop_config.model, "claude-opus-4-6-20250514");
 
         clear_all_env_vars();
     }

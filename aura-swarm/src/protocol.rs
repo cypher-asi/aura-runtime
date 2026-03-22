@@ -31,7 +31,7 @@ pub struct SessionInit {
     /// Override the default system prompt.
     #[serde(default)]
     pub system_prompt: Option<String>,
-    /// Model identifier (e.g., "claude-sonnet-4-20250514").
+    /// Model identifier (e.g., "claude-opus-4-6-20250514").
     #[serde(default)]
     pub model: Option<String>,
     /// Maximum tokens per model response.
@@ -172,7 +172,7 @@ pub struct SessionUsage {
     pub cumulative_output_tokens: u64,
     /// Fraction of the model's context window consumed (0.0–1.0).
     pub context_utilization: f32,
-    /// Model identifier used for this turn (e.g., "claude-sonnet-4-20250514").
+    /// Model identifier used for this turn (e.g., "claude-opus-4-6-20250514").
     pub model: String,
     /// Provider name (e.g., "anthropic").
     pub provider: String,

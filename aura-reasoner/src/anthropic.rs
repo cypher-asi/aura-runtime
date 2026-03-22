@@ -53,7 +53,7 @@ impl AnthropicConfig {
     ///
     /// Reads:
     /// - `AURA_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`
-    /// - `AURA_ANTHROPIC_MODEL` (defaults to "claude-sonnet-4-20250514")
+    /// - `AURA_ANTHROPIC_MODEL` (defaults to "claude-opus-4-6-20250514")
     ///
     /// # Errors
     ///
@@ -83,7 +83,7 @@ impl AnthropicConfig {
         };
 
         let default_model = std::env::var("AURA_ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+            .unwrap_or_else(|_| "claude-opus-4-6-20250514".to_string());
 
         let timeout_ms = std::env::var("AURA_MODEL_TIMEOUT_MS")
             .ok()
