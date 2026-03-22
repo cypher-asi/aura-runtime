@@ -12,6 +12,7 @@ aura-kernel = { path = "../aura-kernel" }
 aura-executor = { path = "../aura-executor" }
 aura-reasoner = { path = "../aura-reasoner" }
 anyhow = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }

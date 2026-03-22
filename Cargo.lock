@@ -157,6 +157,7 @@ dependencies = [
  "aura-kernel",
  "aura-reasoner",
  "futures-util",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
