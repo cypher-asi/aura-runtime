@@ -127,7 +127,9 @@ impl AnthropicProvider {
                 let token = auth_token.ok_or_else(|| {
                     ApiError::Other(anyhow::anyhow!("Proxy mode requires a JWT auth token"))
                 })?;
-                req_builder = req_builder.header("authorization", format!("Bearer {token}"));
+                req_builder = req_builder
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("anthropic-beta", "prompt-caching-2024-07-31");
             }
         }
 
@@ -580,5 +582,110 @@ mod tests {
             .build();
         let thinking = resolve_thinking(&request, "claude-3-haiku");
         assert!(thinking.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_mode_sends_caching_beta_header() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let n = socket.read(&mut buf).await.unwrap();
+            let request_text = String::from_utf8_lossy(&buf[..n]).to_string();
+
+            let body = r#"{"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"test","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+
+            request_text
+        });
+
+        let config = AnthropicConfig {
+            api_key: String::new(),
+            default_model: "test-model".to_string(),
+            timeout_ms: 5000,
+            max_retries: 0,
+            base_url: format!("http://127.0.0.1:{}", addr.port()),
+            routing_mode: RoutingMode::Proxy,
+            fallback_model: None,
+        };
+
+        let provider = AnthropicProvider::new(config).unwrap();
+        let request = ModelRequest::builder("test-model", "system")
+            .message(Message::user("test"))
+            .auth_token(Some("test-jwt-token".to_string()))
+            .build();
+
+        let _ = provider.complete(request).await;
+
+        let captured = server.await.unwrap();
+        assert!(
+            captured.contains("anthropic-beta"),
+            "Proxy request should include anthropic-beta header.\nCaptured headers:\n{captured}"
+        );
+        assert!(
+            captured.contains("prompt-caching-2024-07-31"),
+            "anthropic-beta header should include prompt-caching beta tag.\nCaptured headers:\n{captured}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_direct_mode_sends_caching_beta_header() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let n = socket.read(&mut buf).await.unwrap();
+            let request_text = String::from_utf8_lossy(&buf[..n]).to_string();
+
+            let body = r#"{"id":"msg_test","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"test","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+
+            request_text
+        });
+
+        let config = AnthropicConfig {
+            api_key: "test-api-key".to_string(),
+            default_model: "test-model".to_string(),
+            timeout_ms: 5000,
+            max_retries: 0,
+            base_url: format!("http://127.0.0.1:{}", addr.port()),
+            routing_mode: RoutingMode::Direct,
+            fallback_model: None,
+        };
+
+        let provider = AnthropicProvider::new(config).unwrap();
+        let request = ModelRequest::builder("test-model", "system")
+            .message(Message::user("test"))
+            .build();
+
+        let _ = provider.complete(request).await;
+
+        let captured = server.await.unwrap();
+        assert!(
+            captured.contains("anthropic-beta"),
+            "Direct request should include anthropic-beta header.\nCaptured headers:\n{captured}"
+        );
+        assert!(
+            captured.contains("prompt-caching-2024-07-31"),
+            "anthropic-beta header should include prompt-caching beta tag.\nCaptured headers:\n{captured}"
+        );
     }
 }
