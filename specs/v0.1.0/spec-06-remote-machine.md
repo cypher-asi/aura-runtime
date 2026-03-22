@@ -73,7 +73,7 @@ aura-tools/                     # All tool implementations
 │         │                                                             │
 │         ├── target = "local" or None ──► fs_tools (std::fs)          │
 │         │                                                             │
-│         └── target = machine_id ──┬──► SwarmConfig.machines          │
+│         └── target = machine_id ──┬──► NodeConfig.machines          │
 │                                   │         │                         │
 │                                   │         ▼                         │
 │                                   │    MachineConfig                  │
@@ -105,8 +105,8 @@ aura-tools/                     # All tool implementations
 Machines are defined at the **Swarm level** (like keys). All agents in a swarm can access any configured machine.
 
 ```rust
-// In aura-swarm or aura-core
-pub struct SwarmConfig {
+// In aura-node or aura-core
+pub struct NodeConfig {
     pub swarm_id: SwarmId,
     pub machines: HashMap<MachineId, MachineConfig>,
     // ... existing fields ...
@@ -502,7 +502,7 @@ GET    /api/v1/machines/{id}/status       Connection status + health
 
 ## 9) Security Considerations
 
-- **Host Allowlist**: Only pre-configured machines in SwarmConfig can be accessed
+- **Host Allowlist**: Only pre-configured machines in NodeConfig can be accessed
 - **Path Sandboxing**: Remote paths constrained to `workspace_root`
 - **Command Validation**: Optional command allowlist per machine
 - **Audit Logging**: All remote operations logged to record
@@ -561,7 +561,7 @@ pub enum RemoteError {
 - [ ] Implement `SshSession` with SFTP and exec operations
 - [ ] Implement `SshSessionManager` with connection pooling
 - [ ] Add keystore integration for SSH key retrieval
-- [ ] Add `machines` field to `SwarmConfig`
+- [ ] Add `machines` field to `NodeConfig`
 
 ### Phase 2: Tool Integration
 - [ ] Add `ssh_tools.rs` to `aura-tools`

@@ -1,6 +1,6 @@
 //! # aura-reasoner
 //!
-//! Provider-agnostic model interface for the Aura Swarm.
+//! Provider-agnostic model interface for Aura.
 //!
 //! This crate provides:
 //! - Normalized conversation types (`Message`, `ContentBlock`, `ToolDefinition`)

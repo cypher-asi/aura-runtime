@@ -58,7 +58,7 @@ aura/
 ├─ aura-core              # IDs, schemas, hashing (add SwarmId)
 ├─ aura-store             # RocksDB storage (unchanged)
 ├─ aura-kernel            # Deterministic kernel (uses keystore)
-├─ aura-swarm             # Router, scheduler, workers (owns keystore)
+├─ aura-node              # Router, scheduler, workers (owns keystore)
 ├─ aura-reasoner          # Provider interface (gets keys from keystore)
 ├─ aura-executor          # Executor trait (unchanged)
 ├─ aura-tools             # ToolExecutor (SSH tools use keystore)
@@ -904,16 +904,16 @@ impl EncryptionBackend for VaultTransitBackend {
 
 ```hcl
 # Vault policy for AURA keystore
-path "transit/encrypt/aura-swarm-keys" {
+path "transit/encrypt/aura-node-keys" {
   capabilities = ["update"]
 }
 
-path "transit/decrypt/aura-swarm-keys" {
+path "transit/decrypt/aura-node-keys" {
   capabilities = ["update"]
 }
 
 # Deny reading the key itself
-path "transit/keys/aura-swarm-keys" {
+path "transit/keys/aura-node-keys" {
   capabilities = ["read"]  # Metadata only, not the key material
 }
 ```
@@ -922,7 +922,7 @@ path "transit/keys/aura-swarm-keys" {
 # Setup commands
 vault secrets enable transit
 
-vault write transit/keys/aura-swarm-keys \
+vault write transit/keys/aura-node-keys \
     type=aes256-gcm96 \
     derived=true         # Enables context-based key derivation
 
@@ -1369,7 +1369,7 @@ $ aura keys lock
 $ aura keys config set-backend vault \
     --address https://vault.example.com \
     --transit-mount transit \
-    --key-name aura-swarm-keys \
+    --key-name aura-node-keys \
     --auth-method approle
 ```
 
@@ -1411,7 +1411,7 @@ AURA_MASTER_KEY_FILE=/path/to/master.key
 # Vault backend configuration
 AURA_VAULT_ADDR=https://vault.example.com
 AURA_VAULT_TRANSIT_MOUNT=transit
-AURA_VAULT_KEY_NAME=aura-swarm-keys
+AURA_VAULT_KEY_NAME=aura-node-keys
 AURA_VAULT_AUTH_METHOD=approle
 AURA_VAULT_ROLE_ID=<role-id>
 AURA_VAULT_SECRET_ID=<secret-id>

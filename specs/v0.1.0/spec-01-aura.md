@@ -73,7 +73,7 @@ aura/
 ├─ aura-core          // IDs, schemas, hashing, serialization, errors
 ├─ aura-store         // RocksDB impl (CFs, keys, iterators, batches)
 ├─ aura-kernel        // deterministic kernel + policy engine
-├─ aura-swarm         // router, scheduler, worker runtime (tokio)
+├─ aura-node          // router, scheduler, worker runtime (tokio)
 ├─ aura-reasoner      // Rust client to TS gateway (http/grpc)
 ├─ aura-executor      // executor trait + orchestration
 ├─ aura-tools         // ToolExecutor (fs + cmd) + sandbox
@@ -702,7 +702,7 @@ For each Agent:
 ### Must have
 
 * `aura-store`: record + agent_meta + inbox CFs, keyspace, atomic WriteBatch
-* `aura-swarm`: router + scheduler + per-agent lock + workers
+* `aura-node`: router + scheduler + per-agent lock + workers
 * `aura-kernel`: context builder + policy + record entry builder + execution orchestration
 * `aura-reasoner`: client to TS gateway
 * `aura-gateway-ts`: propose-only Claude Code integration

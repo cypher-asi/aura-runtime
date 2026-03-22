@@ -1,6 +1,6 @@
-//! Swarm runtime.
+//! Node runtime.
 
-use crate::config::SwarmConfig;
+use crate::config::NodeConfig;
 use crate::router::{create_router, RouterState};
 use crate::scheduler::Scheduler;
 use aura_executor::Executor;
@@ -12,30 +12,30 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
-/// The Aura Swarm runtime.
-pub struct Swarm {
-    config: SwarmConfig,
+/// The Aura Node runtime.
+pub struct Node {
+    config: NodeConfig,
 }
 
-impl Swarm {
-    /// Create a new swarm with the given config.
+impl Node {
+    /// Create a new node with the given config.
     #[must_use]
-    pub const fn new(config: SwarmConfig) -> Self {
+    pub const fn new(config: NodeConfig) -> Self {
         Self { config }
     }
 
-    /// Create a swarm with default config.
+    /// Create a node with default config.
     #[must_use]
     pub fn with_defaults() -> Self {
-        Self::new(SwarmConfig::default())
+        Self::new(NodeConfig::default())
     }
 
-    /// Run the swarm.
+    /// Run the node.
     ///
     /// # Errors
-    /// Returns error if the swarm fails to start.
+    /// Returns error if the node fails to start.
     pub async fn run(self) -> anyhow::Result<()> {
-        info!("Starting Aura Swarm");
+        info!("Starting Aura Node");
         info!(data_dir = ?self.config.data_dir, "Data directory");
 
         tokio::fs::create_dir_all(self.config.db_path()).await?;
@@ -124,53 +124,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_swarm_new() {
-        let config = SwarmConfig::default();
-        let swarm = Swarm::new(config.clone());
-        assert_eq!(swarm.config.bind_addr, config.bind_addr);
+    fn test_node_new() {
+        let config = NodeConfig::default();
+        let node = Node::new(config.clone());
+        assert_eq!(node.config.bind_addr, config.bind_addr);
     }
 
     #[test]
-    fn test_swarm_with_defaults() {
-        let swarm = Swarm::with_defaults();
-        assert_eq!(swarm.config.bind_addr, "127.0.0.1:8080");
+    fn test_node_with_defaults() {
+        let node = Node::with_defaults();
+        assert_eq!(node.config.bind_addr, "127.0.0.1:8080");
     }
 
     #[test]
-    fn test_swarm_custom_config() {
-        let config = SwarmConfig {
+    fn test_node_custom_config() {
+        let config = NodeConfig {
             bind_addr: "0.0.0.0:9090".to_string(),
             sync_writes: true,
             record_window_size: 100,
-            ..SwarmConfig::default()
+            ..NodeConfig::default()
         };
-        let swarm = Swarm::new(config);
-        assert_eq!(swarm.config.bind_addr, "0.0.0.0:9090");
-        assert!(swarm.config.sync_writes);
-        assert_eq!(swarm.config.record_window_size, 100);
+        let node = Node::new(config);
+        assert_eq!(node.config.bind_addr, "0.0.0.0:9090");
+        assert!(node.config.sync_writes);
+        assert_eq!(node.config.record_window_size, 100);
     }
 
     #[test]
-    fn test_swarm_config_propagation() {
-        let config = SwarmConfig {
+    fn test_node_config_propagation() {
+        let config = NodeConfig {
             data_dir: std::path::PathBuf::from("/custom/data"),
             enable_fs_tools: false,
             enable_cmd_tools: true,
             allowed_commands: vec!["ls".to_string(), "cat".to_string()],
-            ..SwarmConfig::default()
+            ..NodeConfig::default()
         };
-        let swarm = Swarm::new(config);
+        let node = Node::new(config);
         assert_eq!(
-            swarm.config.data_dir,
+            node.config.data_dir,
             std::path::PathBuf::from("/custom/data")
         );
-        assert!(!swarm.config.enable_fs_tools);
-        assert!(swarm.config.enable_cmd_tools);
-        assert_eq!(swarm.config.allowed_commands.len(), 2);
+        assert!(!node.config.enable_fs_tools);
+        assert!(node.config.enable_cmd_tools);
+        assert_eq!(node.config.allowed_commands.len(), 2);
     }
 
     #[test]
     fn test_create_model_provider_returns_something() {
-        let _provider = Swarm::create_model_provider();
+        let _provider = Node::create_model_provider();
     }
 }

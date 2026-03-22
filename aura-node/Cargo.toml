@@ -1,6 +1,6 @@
 [package]
-name = "aura-swarm"
-description = "Swarm runtime for Aura - router, scheduler, workers"
+name = "aura-node"
+description = "Node runtime for Aura - router, scheduler, workers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

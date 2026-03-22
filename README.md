@@ -58,7 +58,7 @@ Aura Swarm is a system for running many deterministic agents concurrently where:
 | `aura-tools` | Sandboxed filesystem and command tools |
 | `aura-reasoner` | HTTP client to TypeScript gateway |
 | `aura-kernel` | Deterministic kernel with policy engine |
-| `aura-swarm` | HTTP router, scheduler, worker runtime |
+| `aura-node` | HTTP router, scheduler, worker runtime |
 | `aura-gateway-ts` | TypeScript gateway for Claude integration |
 
 ## Quick Start
@@ -91,7 +91,7 @@ npm run build
 
 2. Start the Rust swarm:
    ```bash
-   cargo run -p aura-swarm
+   cargo run -p aura-node
    ```
 
 ### API

@@ -1,6 +1,6 @@
 //! # aura-kernel
 //!
-//! Deterministic kernel and turn processor for the Aura Swarm.
+//! Deterministic kernel and turn processor for Aura.
 //!
 //! This crate provides:
 //! - Single-step kernel processing (Spec-01 legacy)

@@ -1,6 +1,6 @@
 //! # aura-cli
 //!
-//! Interactive CLI for the Aura Swarm.
+//! Interactive CLI for Aura.
 //!
 //! Provides a REPL interface for interacting with Aura agents.
 

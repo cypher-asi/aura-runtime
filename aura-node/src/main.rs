@@ -1,6 +1,6 @@
-//! Aura Swarm binary entry point.
+//! Aura Node binary entry point.
 
-use aura_swarm::{Swarm, SwarmConfig};
+use aura_node::{Node, NodeConfig};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[tokio::main]
@@ -12,8 +12,8 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Load config from environment
-    let config = SwarmConfig::from_env();
+    let config = NodeConfig::from_env();
 
-    // Run the swarm
-    Swarm::new(config).run().await
+    // Run the node
+    Node::new(config).run().await
 }

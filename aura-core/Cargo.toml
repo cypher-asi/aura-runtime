@@ -1,6 +1,6 @@
 [package]
 name = "aura-core"
-description = "Core types, IDs, schemas, and serialization for Aura Swarm"
+description = "Core types, IDs, schemas, and serialization for Aura"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

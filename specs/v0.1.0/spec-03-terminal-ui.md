@@ -31,7 +31,7 @@ aura/
 ├─ aura-core          # IDs, schemas, hashing (unchanged)
 ├─ aura-store         # RocksDB storage (unchanged)
 ├─ aura-kernel        # Deterministic kernel + turn processor (unchanged)
-├─ aura-swarm         # Router, scheduler, workers (unchanged)
+├─ aura-node          # Router, scheduler, workers (unchanged)
 ├─ aura-reasoner      # Provider-agnostic + Anthropic impl (unchanged)
 ├─ aura-executor      # Executor trait + orchestration (unchanged)
 ├─ aura-tools         # ToolExecutor (fs + cmd) + sandbox (unchanged)
@@ -164,7 +164,7 @@ Heavy borders:        ┏━━━━━━━━━━━━━━━━━┓
 ║  └─────────────────────────────────────────────────────────────────┘   ║
 ║                                                                         ║
 ║  ┌─ OUTPUT ────────────────────────────────────────────────────────┐   ║
-║  │ 1│ use aura_swarm::Swarm;                                       │   ║
+║  │ 1│ use aura_node::Node;                                       │   ║
 ║  │ 2│ use aura_store::RocksStore;                                  │   ║
 ║  │ 3│                                                              │   ║
 ║  │ 4│ #[tokio::main]                                               │   ║

@@ -1,6 +1,6 @@
 [package]
 name = "aura-cli"
-description = "Interactive CLI for the Aura Swarm"
+description = "Interactive CLI for Aura"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

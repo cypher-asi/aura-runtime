@@ -1,6 +1,6 @@
 [package]
 name = "aura-store"
-description = "RocksDB storage implementation for Aura Swarm"
+description = "RocksDB storage implementation for Aura"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

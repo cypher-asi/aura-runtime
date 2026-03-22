@@ -414,7 +414,7 @@ The runtime would auto-run the build command after tool use stops and retry if i
 
 ### R12. WebSocket Endpoint Alignment `[LOW]`
 
-**Problem:** The spec says `WS /chat`, the aura-swarm gateway connects to `WS /stream`. These should be aligned.
+**Problem:** The spec says `WS /chat`, the aura-node gateway connects to `WS /stream`. These should be aligned.
 
 **Recommendation:** Pick one and update both spec and implementation. `/stream` is more descriptive. Update `06-agent-runtime.md` to say `/stream`.
 

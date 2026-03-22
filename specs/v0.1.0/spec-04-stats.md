@@ -35,7 +35,7 @@ aura/
 ├─ aura-core              # IDs, schemas, hashing (unchanged)
 ├─ aura-store             # RocksDB storage (unchanged, stats use this)
 ├─ aura-kernel            # Deterministic kernel (emits stat events)
-├─ aura-swarm             # Router, scheduler, workers (unchanged)
+├─ aura-node              # Router, scheduler, workers (unchanged)
 ├─ aura-reasoner          # Provider interface (emits token usage)
 ├─ aura-executor          # Executor trait (unchanged)
 ├─ aura-tools             # ToolExecutor (emits tool stats)
@@ -1204,7 +1204,7 @@ impl StatsQueryEngine {
 ### 8.2 HTTP API Endpoints
 
 ```rust
-// In aura-swarm/src/router.rs (add to existing router)
+// In aura-node/src/router.rs (add to existing router)
 
 /// Stats endpoints
 pub fn stats_routes() -> Router {
@@ -1656,7 +1656,7 @@ missing_panics_doc = "warn"        # Upgrade to deny after initial impl
 
 ### Phase 5: Query API
 - [ ] Implement `StatsQueryEngine` with timeouts
-- [ ] Add HTTP endpoints to `aura-swarm`
+- [ ] Add HTTP endpoints to `aura-node`
 - [ ] Implement top-N queries
 - [ ] Add proper error responses (not panics)
 

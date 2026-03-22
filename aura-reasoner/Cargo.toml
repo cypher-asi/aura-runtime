@@ -1,6 +1,6 @@
 [package]
 name = "aura-reasoner"
-description = "Provider-agnostic model interface for Aura Swarm"
+description = "Provider-agnostic model interface for Aura"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

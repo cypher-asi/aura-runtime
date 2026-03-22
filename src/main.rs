@@ -264,13 +264,13 @@ async fn run_terminal(args: RunArgs) -> anyhow::Result<()> {
 }
 
 // ============================================================================
-// Headless Mode (Swarm)
+// Headless Mode (Node)
 // ============================================================================
 
 async fn run_headless() -> anyhow::Result<()> {
-    info!("Starting AURA OS in headless mode (swarm server)");
+    info!("Starting AURA OS in headless mode (node server)");
 
-    let config = aura_swarm::SwarmConfig::from_env();
+    let config = aura_node::NodeConfig::from_env();
 
-    aura_swarm::Swarm::new(config).run().await
+    aura_node::Node::new(config).run().await
 }

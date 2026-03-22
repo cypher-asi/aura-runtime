@@ -1,6 +1,6 @@
-//! HTTP and WebSocket router for the swarm API.
+//! HTTP and WebSocket router for the node API.
 
-use crate::config::SwarmConfig;
+use crate::config::NodeConfig;
 use crate::scheduler::Scheduler;
 use crate::session::{handle_ws_connection, WsContext};
 use aura_core::{AgentId, Transaction, TransactionType};
@@ -24,7 +24,7 @@ use tracing::{error, info, instrument};
 pub struct RouterState {
     pub store: Arc<dyn Store>,
     pub scheduler: Arc<Scheduler>,
-    pub config: SwarmConfig,
+    pub config: NodeConfig,
     /// Model provider for WebSocket sessions (type-erased).
     pub provider: Arc<dyn ModelProvider + Send + Sync>,
     /// Tool configuration for WebSocket sessions.
@@ -259,7 +259,7 @@ mod tests {
         RouterState {
             store,
             scheduler,
-            config: SwarmConfig::default(),
+            config: NodeConfig::default(),
             provider,
             tool_config: ToolConfig::default(),
         }

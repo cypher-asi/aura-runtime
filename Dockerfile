@@ -15,7 +15,7 @@ COPY aura-executor aura-executor/
 COPY aura-tools   aura-tools/
 COPY aura-reasoner aura-reasoner/
 COPY aura-kernel  aura-kernel/
-COPY aura-swarm   aura-swarm/
+COPY aura-node    aura-node/
 COPY aura-terminal aura-terminal/
 COPY aura-cli     aura-cli/
 COPY aura-agent   aura-agent/

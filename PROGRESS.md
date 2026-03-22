@@ -148,7 +148,7 @@ Deterministic kernel with context building and policy.
 
 ---
 
-### Phase 7: Swarm Runtime (`aura-swarm`)
+### Phase 7: Swarm Runtime (`aura-node`)
 **Status:** 🟢 Complete (code written, requires LLVM to build)
 
 HTTP router, scheduler, and worker management.
@@ -161,7 +161,7 @@ HTTP router, scheduler, and worker management.
 - [x] Per-agent lock table (DashMap + Mutex)
 - [x] Scheduler (pick agents with inbox items)
 - [x] Worker loop implementation
-- [x] `SwarmConfig` struct
+- [x] `NodeConfig` struct
 
 ---
 
@@ -325,7 +325,7 @@ aura_os/
 ├── aura-tools/          # Tool executor (fs, cmd)
 ├── aura-reasoner/       # Model provider abstraction + Anthropic
 ├── aura-kernel/         # Deterministic kernel + Turn Processor
-├── aura-swarm/          # HTTP router, scheduler
+├── aura-node/           # HTTP router, scheduler
 ├── aura-cli/            # Interactive CLI (planned)
 └── aura-gateway-ts/     # TypeScript gateway (deprecated)
 ```

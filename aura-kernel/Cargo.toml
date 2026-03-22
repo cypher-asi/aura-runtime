@@ -1,6 +1,6 @@
 [package]
 name = "aura-kernel"
-description = "Deterministic kernel and turn processor for Aura Swarm"
+description = "Deterministic kernel and turn processor for Aura"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
-//! # aura-swarm
+//! # aura-node
 //!
-//! Swarm runtime for Aura.
+//! Node runtime for Aura.
 //!
 //! Provides:
 //! - HTTP router for transaction submission
@@ -27,15 +27,15 @@ pub mod protocol;
 mod router;
 mod scheduler;
 pub mod session;
-mod swarm;
+mod node;
 mod worker;
 
-pub use config::SwarmConfig;
-pub use swarm::Swarm;
+pub use config::NodeConfig;
+pub use node::Node;
 
-/// Top-level error type for the aura-swarm crate.
+/// Top-level error type for the aura-node crate.
 #[derive(Debug, thiserror::Error)]
-pub enum SwarmError {
+pub enum NodeError {
     /// Server bind or runtime error.
     #[error("server error: {0}")]
     Server(#[from] std::io::Error),

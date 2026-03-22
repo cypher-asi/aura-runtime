@@ -121,9 +121,9 @@ dependencies = [
  "aura-core",
  "aura-executor",
  "aura-kernel",
+ "aura-node",
  "aura-reasoner",
  "aura-store",
- "aura-swarm",
  "aura-terminal",
  "aura-tools",
  "axum",
@@ -253,6 +253,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "aura-node"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aura-agent",
+ "aura-core",
+ "aura-executor",
+ "aura-kernel",
+ "aura-reasoner",
+ "aura-store",
+ "aura-tools",
+ "axum",
+ "base64 0.22.1",
+ "blake3",
+ "bytes",
+ "dashmap 5.5.3",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tower 0.4.13",
+ "tower 0.5.2",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "aura-reasoner"
 version = "0.1.0"
 dependencies = [
@@ -283,38 +315,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "aura-swarm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "aura-agent",
- "aura-core",
- "aura-executor",
- "aura-kernel",
- "aura-reasoner",
- "aura-store",
- "aura-tools",
- "axum",
- "base64 0.22.1",
- "blake3",
- "bytes",
- "dashmap 5.5.3",
- "futures-util",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tower 0.4.13",
- "tower 0.5.2",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 //! # aura-core
 //!
-//! Core types, identifiers, schemas, and serialization for the Aura Swarm.
+//! Core types, identifiers, schemas, and serialization for Aura.
 //!
 //! This crate provides:
 //! - Strongly-typed identifiers (`AgentId`, `TxId`, `ActionId`, `Hash`, `ProcessId`)

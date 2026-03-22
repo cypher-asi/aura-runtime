@@ -32,7 +32,7 @@ Build a "Claude Code–like" agent runtime on top of AURA's deterministic archit
 * `aura-store`: RocksDB storage (no changes)
 * `aura-executor`: Executor trait + router (no changes)
 * `aura-tools`: ToolExecutor + sandbox (extend with more tools)
-* `aura-swarm`: Router, scheduler, workers (minor updates)
+* `aura-node`: Router, scheduler, workers (minor updates)
 
 ### What changes
 
@@ -50,7 +50,7 @@ CLI/UI ────────────────────────�
                                                                         │
                                                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                              aura-swarm                                 │
+│                              aura-node                                  │
 │   ┌──────────┐    ┌─────────────┐    ┌──────────────────────────────┐  │
 │   │  Router  │───►│  Scheduler  │───►│   Worker (per agent)         │  │
 │   │ (HTTP)   │    │             │    │   - Lock                     │  │
@@ -120,7 +120,7 @@ aura/
 │  ├─ turn_processor.rs   # NEW: Claude Code-like loop
 │  ├─ policy.rs           # Existing
 │  └─ context.rs          # Existing
-├─ aura-swarm             # Router, scheduler, workers (existing)
+├─ aura-node              # Router, scheduler, workers (existing)
 ├─ aura-cli               # NEW: Interactive CLI
 │  ├─ main.rs
 │  ├─ session.rs

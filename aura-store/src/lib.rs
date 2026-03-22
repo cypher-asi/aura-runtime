@@ -1,6 +1,6 @@
 //! # aura-store
 //!
-//! `RocksDB` storage implementation for the Aura Swarm.
+//! `RocksDB` storage implementation for Aura.
 //!
 //! Provides:
 //! - Column families for Record, Agent metadata, and Inbox
