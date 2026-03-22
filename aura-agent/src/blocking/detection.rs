@@ -1,0 +1,437 @@
+//! Blocking detection logic.
+//!
+//! Each detector examines the current tool call against loop state and
+//! returns whether to block it (with a recovery message for the model).
+
+use crate::constants::{
+    CMD_FAILURE_BLOCK_THRESHOLD, COMMAND_TOOLS, EXPLORATION_TOOLS, MAX_RANGE_READS_PER_FILE,
+    MAX_READS_PER_FILE, WRITE_COOLDOWN_ITERATIONS, WRITE_FAILURE_BLOCK_THRESHOLD, WRITE_TOOLS,
+};
+use crate::read_guard::ReadGuardState;
+use crate::types::ToolCallInfo;
+use std::collections::{HashMap, HashSet};
+
+/// Mutable state for blocking detection across iterations.
+#[derive(Debug, Default)]
+pub struct BlockingContext {
+    /// Paths that have been successfully written to in previous iterations.
+    pub(crate) written_paths: HashSet<String>,
+    /// Per-file write failure counts.
+    pub(crate) write_failures: HashMap<String, usize>,
+    /// Consecutive command failures across iterations.
+    pub(crate) consecutive_cmd_failures: usize,
+    /// Per-path write cooldowns (iterations remaining).
+    pub(crate) write_cooldowns: HashMap<String, usize>,
+    /// Current exploration count.
+    pub(crate) exploration_count: usize,
+    /// Exploration allowance (may be extended on successful writes).
+    pub(crate) exploration_allowance: usize,
+}
+
+impl BlockingContext {
+    /// Create a new blocking context with the given exploration allowance.
+    #[must_use]
+    pub fn new(exploration_allowance: usize) -> Self {
+        Self {
+            exploration_allowance,
+            ..Self::default()
+        }
+    }
+
+    /// Decrement all write cooldowns, removing expired ones.
+    pub(crate) fn decrement_cooldowns(&mut self) {
+        self.write_cooldowns.retain(|_, v| {
+            *v = v.saturating_sub(1);
+            *v > 0
+        });
+    }
+
+    /// Record a successful write to extend exploration allowance and reset read guards.
+    pub(crate) fn on_write_success(&mut self, path: &str, read_guard: &mut ReadGuardState) {
+        self.written_paths.insert(path.to_string());
+        self.write_failures.remove(path);
+        self.exploration_allowance += 2;
+        read_guard.reset_for_path(path);
+    }
+
+    /// Record a write failure.
+    pub(crate) fn on_write_failure(&mut self, path: &str) {
+        let count = self.write_failures.entry(path.to_string()).or_insert(0);
+        *count += 1;
+        if *count >= WRITE_FAILURE_BLOCK_THRESHOLD {
+            self.write_cooldowns
+                .insert(path.to_string(), WRITE_COOLDOWN_ITERATIONS);
+        }
+    }
+
+    /// Record a command result (success or failure).
+    pub(crate) fn on_command_result(&mut self, success: bool) {
+        if success {
+            self.consecutive_cmd_failures = 0;
+        } else {
+            self.consecutive_cmd_failures += 1;
+        }
+    }
+}
+
+/// Result of checking whether a tool call should be blocked.
+#[derive(Debug)]
+pub struct BlockCheckResult {
+    /// Whether the tool call is blocked.
+    pub(crate) blocked: bool,
+    /// Recovery message to inject if blocked.
+    pub(crate) recovery_message: Option<String>,
+}
+
+impl BlockCheckResult {
+    const fn allowed() -> Self {
+        Self {
+            blocked: false,
+            recovery_message: None,
+        }
+    }
+
+    fn blocked(msg: impl Into<String>) -> Self {
+        Self {
+            blocked: true,
+            recovery_message: Some(msg.into()),
+        }
+    }
+}
+
+/// Check if a tool call should be blocked based on all detectors.
+pub fn detect_all_blocked(
+    tool: &ToolCallInfo,
+    ctx: &BlockingContext,
+    read_guard: &ReadGuardState,
+) -> BlockCheckResult {
+    if let Some(result) = detect_blocked_writes(tool, ctx) {
+        if result.blocked {
+            return result;
+        }
+    }
+
+    if let Some(result) = detect_blocked_write_failures(tool, ctx) {
+        if result.blocked {
+            return result;
+        }
+    }
+
+    if let Some(result) = detect_blocked_commands(tool, ctx) {
+        if result.blocked {
+            return result;
+        }
+    }
+
+    if let Some(result) = detect_blocked_exploration(tool, ctx) {
+        if result.blocked {
+            return result;
+        }
+    }
+
+    if let Some(result) = detect_blocked_reads(tool, read_guard) {
+        if result.blocked {
+            return result;
+        }
+    }
+
+    if let Some(result) = detect_write_cooldowns(tool, ctx) {
+        if result.blocked {
+            return result;
+        }
+    }
+
+    if let Some(result) = detect_shell_read_workaround(tool) {
+        if result.blocked {
+            return result;
+        }
+    }
+
+    BlockCheckResult::allowed()
+}
+
+fn extract_path(tool: &ToolCallInfo) -> Option<String> {
+    tool.input
+        .get("path")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+/// Detector 1: Block duplicate writes to paths already written in this turn.
+fn detect_blocked_writes(tool: &ToolCallInfo, ctx: &BlockingContext) -> Option<BlockCheckResult> {
+    if !WRITE_TOOLS.contains(&tool.name.as_str()) {
+        return None;
+    }
+    let path = extract_path(tool)?;
+    if ctx.written_paths.contains(&path) {
+        Some(BlockCheckResult::blocked(format!(
+            "You already wrote to `{path}` in this turn. Use `fs_edit` to make targeted changes \
+             instead of rewriting the entire file. If you need to rewrite, read the file first \
+             to verify your changes."
+        )))
+    } else {
+        Some(BlockCheckResult::allowed())
+    }
+}
+
+/// Detector 2: Block writes to files that have failed too many times.
+fn detect_blocked_write_failures(
+    tool: &ToolCallInfo,
+    ctx: &BlockingContext,
+) -> Option<BlockCheckResult> {
+    if !WRITE_TOOLS.contains(&tool.name.as_str()) {
+        return None;
+    }
+    let path = extract_path(tool)?;
+    if let Some(&count) = ctx.write_failures.get(&path) {
+        if count >= WRITE_FAILURE_BLOCK_THRESHOLD {
+            return Some(BlockCheckResult::blocked(format!(
+                "Writes to `{path}` have failed {count} times. Try a different approach \
+                 or read the file to understand its current state."
+            )));
+        }
+    }
+    Some(BlockCheckResult::allowed())
+}
+
+/// Detector 3: Block all commands after too many consecutive failures.
+fn detect_blocked_commands(tool: &ToolCallInfo, ctx: &BlockingContext) -> Option<BlockCheckResult> {
+    if !COMMAND_TOOLS.contains(&tool.name.as_str()) {
+        return None;
+    }
+    if ctx.consecutive_cmd_failures >= CMD_FAILURE_BLOCK_THRESHOLD {
+        Some(BlockCheckResult::blocked(format!(
+            "Commands have failed {} consecutive times. Fix the underlying issue before \
+             running more commands. Review error messages and make code changes first.",
+            ctx.consecutive_cmd_failures
+        )))
+    } else {
+        Some(BlockCheckResult::allowed())
+    }
+}
+
+/// Detector 4: Block exploration tools when allowance is exceeded.
+fn detect_blocked_exploration(
+    tool: &ToolCallInfo,
+    ctx: &BlockingContext,
+) -> Option<BlockCheckResult> {
+    if !EXPLORATION_TOOLS.contains(&tool.name.as_str()) {
+        return None;
+    }
+    if ctx.exploration_count >= ctx.exploration_allowance {
+        Some(BlockCheckResult::blocked(
+            "Exploration budget exceeded. You have spent too many iterations reading files \
+             and searching without making changes. Start implementing now with the information \
+             you have.",
+        ))
+    } else {
+        Some(BlockCheckResult::allowed())
+    }
+}
+
+/// Detector 5: Block reads that exceed the per-file read guard limits.
+fn detect_blocked_reads(
+    tool: &ToolCallInfo,
+    read_guard: &ReadGuardState,
+) -> Option<BlockCheckResult> {
+    let is_read = tool.name == "fs_read" || tool.name == "read_file";
+    if !is_read {
+        return None;
+    }
+    let path = extract_path(tool)?;
+    let is_range = tool.input.get("start_line").is_some() || tool.input.get("end_line").is_some();
+
+    if is_range {
+        if read_guard.range_read_count(&path) >= MAX_RANGE_READS_PER_FILE {
+            return Some(BlockCheckResult::blocked(format!(
+                "You have read ranges of `{path}` too many times. The content should already \
+                 be in your context. Use the information you have."
+            )));
+        }
+    } else if read_guard.full_read_count(&path) >= MAX_READS_PER_FILE {
+        return Some(BlockCheckResult::blocked(format!(
+            "You have read `{path}` in full too many times. The content is already in your \
+             context. Use the information you have or read a specific line range."
+        )));
+    }
+
+    Some(BlockCheckResult::allowed())
+}
+
+/// Detector 6: Block writes to paths with active cooldowns.
+fn detect_write_cooldowns(tool: &ToolCallInfo, ctx: &BlockingContext) -> Option<BlockCheckResult> {
+    if !WRITE_TOOLS.contains(&tool.name.as_str()) {
+        return None;
+    }
+    let path = extract_path(tool)?;
+    if let Some(&remaining) = ctx.write_cooldowns.get(&path) {
+        if remaining > 0 {
+            return Some(BlockCheckResult::blocked(format!(
+                "Writes to `{path}` are on cooldown ({remaining} iterations remaining) \
+                 due to repeated failures. Try a different approach."
+            )));
+        }
+    }
+    Some(BlockCheckResult::allowed())
+}
+
+/// Detector 7: Block shell commands that are just reading files.
+fn detect_shell_read_workaround(tool: &ToolCallInfo) -> Option<BlockCheckResult> {
+    if !COMMAND_TOOLS.contains(&tool.name.as_str()) {
+        return None;
+    }
+    let command = tool
+        .input
+        .get("command")
+        .or_else(|| tool.input.get("args"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if is_shell_read_cmd(command) {
+        Some(BlockCheckResult::blocked(
+            "Using shell commands to read files is not allowed. \
+             Use `fs_read` or `read_file` instead.",
+        ))
+    } else {
+        Some(BlockCheckResult::allowed())
+    }
+}
+
+/// Check if a shell command is just reading a file.
+pub fn is_shell_read_cmd(command: &str) -> bool {
+    let lower = command.to_lowercase();
+    let read_cmds = [
+        "cat ",
+        "type ",
+        "get-content ",
+        "head ",
+        "tail ",
+        "less ",
+        "more ",
+    ];
+    read_cmds
+        .iter()
+        .any(|cmd| lower.starts_with(cmd) || lower.contains(&format!("| {cmd}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_tool(name: &str, input: serde_json::Value) -> ToolCallInfo {
+        ToolCallInfo {
+            id: "test_id".to_string(),
+            name: name.to_string(),
+            input,
+        }
+    }
+
+    #[test]
+    fn test_detect_blocked_writes_allows_first_write() {
+        let ctx = BlockingContext::new(12);
+        let tool = make_tool("fs_write", serde_json::json!({"path": "test.rs"}));
+        let result = detect_blocked_writes(&tool, &ctx).unwrap();
+        assert!(!result.blocked);
+    }
+
+    #[test]
+    fn test_detect_blocked_writes_blocks_second_write() {
+        let mut ctx = BlockingContext::new(12);
+        ctx.written_paths.insert("test.rs".to_string());
+        let tool = make_tool("fs_write", serde_json::json!({"path": "test.rs"}));
+        let result = detect_blocked_writes(&tool, &ctx).unwrap();
+        assert!(result.blocked);
+        assert!(result.recovery_message.unwrap().contains("already wrote"));
+    }
+
+    #[test]
+    fn test_detect_blocked_write_failures_at_threshold() {
+        let mut ctx = BlockingContext::new(12);
+        ctx.write_failures.insert("test.rs".to_string(), 3);
+        let tool = make_tool("fs_write", serde_json::json!({"path": "test.rs"}));
+        let result = detect_blocked_write_failures(&tool, &ctx).unwrap();
+        assert!(result.blocked);
+    }
+
+    #[test]
+    fn test_detect_blocked_commands_under_threshold() {
+        let mut ctx = BlockingContext::new(12);
+        ctx.consecutive_cmd_failures = 4;
+        let tool = make_tool("cmd_run", serde_json::json!({"command": "cargo build"}));
+        let result = detect_blocked_commands(&tool, &ctx).unwrap();
+        assert!(!result.blocked);
+    }
+
+    #[test]
+    fn test_detect_blocked_commands_at_threshold() {
+        let mut ctx = BlockingContext::new(12);
+        ctx.consecutive_cmd_failures = 5;
+        let tool = make_tool("cmd_run", serde_json::json!({"command": "cargo build"}));
+        let result = detect_blocked_commands(&tool, &ctx).unwrap();
+        assert!(result.blocked);
+    }
+
+    #[test]
+    fn test_detect_blocked_exploration_allows_under() {
+        let ctx = BlockingContext::new(12);
+        let tool = make_tool("fs_read", serde_json::json!({"path": "test.rs"}));
+        let result = detect_blocked_exploration(&tool, &ctx).unwrap();
+        assert!(!result.blocked);
+    }
+
+    #[test]
+    fn test_detect_blocked_exploration_when_exceeded() {
+        let mut ctx = BlockingContext::new(12);
+        ctx.exploration_count = 12;
+        let tool = make_tool("fs_read", serde_json::json!({"path": "test.rs"}));
+        let result = detect_blocked_exploration(&tool, &ctx).unwrap();
+        assert!(result.blocked);
+    }
+
+    #[test]
+    fn test_decrement_cooldowns_reduces_and_removes() {
+        let mut ctx = BlockingContext::new(12);
+        ctx.write_cooldowns.insert("a.rs".to_string(), 2);
+        ctx.write_cooldowns.insert("b.rs".to_string(), 1);
+        ctx.decrement_cooldowns();
+        assert_eq!(ctx.write_cooldowns.get("a.rs"), Some(&1));
+        assert!(!ctx.write_cooldowns.contains_key("b.rs"));
+    }
+
+    #[test]
+    fn test_is_shell_read_cmd_detects_cat() {
+        assert!(is_shell_read_cmd("cat foo.txt"));
+        assert!(is_shell_read_cmd("Get-Content file.rs"));
+        assert!(is_shell_read_cmd("head -n 10 file.txt"));
+        assert!(is_shell_read_cmd("tail -f log.txt"));
+    }
+
+    #[test]
+    fn test_is_shell_read_cmd_allows_normal_commands() {
+        assert!(!is_shell_read_cmd("cargo build"));
+        assert!(!is_shell_read_cmd("ls -la"));
+        assert!(!is_shell_read_cmd("npm install"));
+    }
+
+    #[test]
+    fn test_detect_all_blocked_combines_all_detectors() {
+        let ctx = BlockingContext::new(12);
+        let read_guard = ReadGuardState::default();
+        let tool = make_tool("fs_write", serde_json::json!({"path": "new.rs"}));
+        let result = detect_all_blocked(&tool, &ctx, &read_guard);
+        assert!(!result.blocked);
+    }
+
+    #[test]
+    fn test_on_write_success_resets_state() {
+        let mut ctx = BlockingContext::new(12);
+        let mut read_guard = ReadGuardState::default();
+        read_guard.record_full_read("test.rs");
+        ctx.write_failures.insert("test.rs".to_string(), 2);
+        ctx.on_write_success("test.rs", &mut read_guard);
+        assert!(ctx.written_paths.contains("test.rs"));
+        assert!(!ctx.write_failures.contains_key("test.rs"));
+        assert_eq!(ctx.exploration_allowance, 14);
+        assert_eq!(read_guard.full_read_count("test.rs"), 0);
+    }
+}

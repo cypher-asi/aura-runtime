@@ -143,6 +143,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "aura-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aura-core",
+ "aura-kernel",
+ "aura-reasoner",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "aura-cli"
 version = "0.1.0"
 dependencies = [

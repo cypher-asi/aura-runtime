@@ -43,6 +43,7 @@ members = [
     "aura-swarm",
     "aura-terminal",
     "aura-cli",
+    "aura-agent",
 ]
 
 [workspace.package]

@@ -1,0 +1,25 @@
+[package]
+name = "aura-agent"
+description = "Multi-step agentic orchestration layer for Aura"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aura-core = { path = "../aura-core" }
+aura-kernel = { path = "../aura-kernel" }
+aura-reasoner = { path = "../aura-reasoner" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
