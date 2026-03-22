@@ -94,7 +94,7 @@ pub struct AgentLoopResult {
 
 /// Implementors execute tool calls and optionally provide build integration.
 ///
-/// `aura-runtime` provides a default implementation wrapping `ExecutorRouter`.
+/// `aura-harness` provides a default implementation wrapping `ExecutorRouter`.
 /// `aura-app` can implement this with project-aware paths, domain tools
 /// (spec/task CRUD, dev loop, engine phase gating), and event forwarding.
 #[async_trait]

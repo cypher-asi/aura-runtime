@@ -1,6 +1,6 @@
-# aura-runtime Requirements
+# aura-harness Requirements
 
-Specification for what **aura-runtime** needs to support so **aura-app** can fully delegate agent intelligence to it — same runtime binary for local sidecar and cloud microVM execution.
+Specification for what **aura-harness** needs to support so **aura-app** can fully delegate agent intelligence to it — same runtime binary for local sidecar and cloud microVM execution.
 
 ---
 
@@ -17,7 +17,7 @@ Specification for what **aura-runtime** needs to support so **aura-app** can ful
 
 ## Tool Mapping
 
-| aura-app tool      | aura-runtime equivalent | Status     | Notes                                                                                                                                                          |
+| aura-app tool      | aura-harness equivalent | Status     | Notes                                                                                                                                                          |
 | ------------------ | ----------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `read_file`        | `fs_read`               | Exists     | Schema compatible                                                                                                                                              |
 | `write_file`       | `fs_write`              | Exists     | Schema compatible                                                                                                                                              |
@@ -38,7 +38,7 @@ Specification for what **aura-runtime** needs to support so **aura-app** can ful
 
 ### R1. Tool Extension API `[CRITICAL]`
 
-**Problem:** aura-app has 30 tools. aura-runtime has 7 built-in tools (`fs_read`, `fs_write`, `fs_ls`, `fs_edit`, `fs_stat`, `cmd_run`, `search_code`). The remaining 22 are domain-specific: 20 chat management tools (spec/task/sprint/project/dev-loop management) plus 2 engine-only tools (`task_done`, `get_task_context`). Without an extension mechanism, aura-app would need to intercept tool calls outside the runtime — breaking the "no weird communication" goal.
+**Problem:** aura-app has 30 tools. aura-harness has 7 built-in tools (`fs_read`, `fs_write`, `fs_ls`, `fs_edit`, `fs_stat`, `cmd_run`, `search_code`). The remaining 22 are domain-specific: 20 chat management tools (spec/task/sprint/project/dev-loop management) plus 2 engine-only tools (`task_done`, `get_task_context`). Without an extension mechanism, aura-app would need to intercept tool calls outside the runtime — breaking the "no weird communication" goal.
 
 **What aura-app does today:** In `crates/ai/chat/src/chat_tool_executor.rs`, tools like `create_spec`, `list_tasks`, `start_dev_loop` call directly into `ProjectService`, `TaskService`, `SpecGenerationService` etc. In `crates/ai/engine/src/engine/executor.rs`, `task_done` extracts `notes` and `follow_ups` from the tool input and signals the loop to stop.
 
@@ -60,7 +60,7 @@ pub struct SessionConfig {
 
 When the LLM calls an external tool, the runtime POSTs to `callback_url` with `{ "tool_name": "...", "input": {...} }` and returns the response as the tool result. The runtime's `ToolRegistry` in `aura-tools/src/registry.rs` needs to support both built-in and external tools.
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - `aura-tools/src/registry.rs` — extend `ToolRegistry` to hold external tool definitions
 - `aura-kernel/src/turn.rs` — when executing a tool call, check if it's external and dispatch via HTTP
@@ -94,7 +94,7 @@ When the LLM calls an external tool, the runtime POSTs to `callback_url` with `{
 
 The runtime's kernel uses this system prompt instead of the static one from `agent.toml`.
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - WebSocket handler (wherever `/stream` is implemented) — parse `session_init` message type
 - `aura-kernel/src/turn.rs` — accept dynamic system prompt in `TurnProcessor`
@@ -122,7 +122,7 @@ The runtime's kernel uses this system prompt instead of the static one from `age
 }
 ```
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - `aura-reasoner/src/anthropic.rs` (or equivalent) — accept model config per-call rather than only from env
 - `aura-kernel/src/turn.rs` — pass model config from session to reasoner
@@ -139,7 +139,7 @@ The runtime's kernel uses this system prompt instead of the static one from `age
 
 **Recommendation:** Within a WebSocket session, the runtime maintains a conversation message list. Each `user_message` adds to the list. The kernel's turn processor uses the full conversation history (system prompt + all prior messages) when calling the reasoner. When the assistant's turn ends (`assistant_message_end`), the response is appended to the history.
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - WebSocket handler — maintain per-session `Vec<Message>` or equivalent
 - `aura-kernel/src/turn.rs` — accept message history, not just a single transaction payload
@@ -179,7 +179,7 @@ This lets aura-app decide when to close the session and start a new one with a s
 
 **Billing integration:** aura-app uses `MeteredLlm` and `BillingClient` (`crates/domain/billing/`) to meter every LLM call for credit-based billing. When LLM calls move to the runtime, per-turn `usage` (with `model` and `provider`) becomes the billing data source. The `model` and `provider` fields in `assistant_message_end` are required so aura-app can compute cost per turn using its pricing tables. See also R18 for intra-session context management responsibility.
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - WebSocket handler — track cumulative tokens per session
 - Message serialization — add `session_usage`, `model`, `provider` fields
@@ -210,7 +210,7 @@ This lets aura-app decide when to close the session and start a new one with a s
 }
 ```
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - `aura-tools/src/fs_tools.rs` — track file mutations in a session-scoped accumulator
 - WebSocket handler — include file change summary in `assistant_message_end`
@@ -219,7 +219,7 @@ This lets aura-app decide when to close the session and start a new one with a s
 
 ### R7. New Built-in Tools: `fs_delete` and `fs_find` `[HIGH]`
 
-**Problem:** aura-runtime is missing two tools that aura-app relies on.
+**Problem:** aura-harness is missing two tools that aura-app relies on.
 
 **`fs_delete`** — aura-app's `delete_file` (`crates/ai/chat/src/chat_tool_executor.rs`, lines 406–416) calls `std::fs::remove_file` within the sandboxed project directory.
 
@@ -242,7 +242,7 @@ pub async fn fs_find(workspace: &Path, args: Value) -> ToolResult {
 }
 ```
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - `aura-tools/src/fs_tools.rs` — add `fs_delete` and `fs_find` functions
 - `aura-tools/src/registry.rs` — register both tools with schemas
@@ -262,7 +262,7 @@ pub async fn fs_find(workspace: &Path, args: Value) -> ToolResult {
 
 The executor passes `command` to `sh -c` / `cmd /C` as a single string.
 
-**aura-runtime schema** (`aura-tools/src/registry.rs`):
+**aura-harness schema** (`aura-tools/src/registry.rs`):
 
 - `program` (required, string) — executable name
 - `args` (optional, array of strings) — arguments
@@ -276,7 +276,7 @@ The executor passes `command` to `sh -c` / `cmd /C` as a single string.
 3. Accept `timeout_secs` (integer seconds) alongside or instead of `timeout_ms`
 4. The `program` + `args` interface can remain as a secondary form if needed for internal use
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - `aura-tools/src/registry.rs` — update `cmd_run` schema to accept `command`, `working_dir`, `timeout_secs`
 - `aura-tools/src/executor.rs` — parse the single-string `command` field and shell-wrap it
@@ -293,7 +293,7 @@ aura-app's `edit_file` accepts `replace_all` (boolean, default false). When true
 
 aura-app uses `include` for the glob file filter (e.g. `"*.rs"`). The runtime uses `file_pattern` for the same purpose. Pick one name and align both. Recommendation: use `include` since that is what aura-app's tool definitions specify and what the LLM will emit.
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - `aura-tools/src/fs_tools.rs` — add `replace_all` logic to `fs_edit`; rename `file_pattern` to `include` in `search_code`
 - `aura-tools/src/registry.rs` — update schemas for both tools
@@ -518,7 +518,7 @@ This means the multi-project agent chat flow becomes:
 
 If `api_key` is provided in `session_init`, it overrides the env var for that session. The runtime must not log or persist the key.
 
-**Files to modify in aura-runtime:**
+**Files to modify in aura-harness:**
 
 - `aura-reasoner/src/anthropic.rs` — implement direct Anthropic API calls (the `@anthropic-ai/sdk` logic from the gateway, ported to Rust using `reqwest`)
 - `aura-reasoner/src/client.rs` — remove or deprecate `HttpReasoner` that proxies through the gateway

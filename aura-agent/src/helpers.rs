@@ -26,7 +26,7 @@ pub fn push_or_replace_warning(messages: &mut Vec<Message>, warning: &str) {
     messages.push(Message::user(warning));
 }
 
-/// Normalize aura-app tool names to aura-runtime names.
+/// Normalize aura-app tool names to aura-harness names.
 #[must_use]
 pub fn normalize_tool_name(name: &str) -> &str {
     match name {
