@@ -44,6 +44,12 @@ enum Command {
     Deny,
     /// Show pending file-level changes (diff).
     Diff,
+    /// Authenticate with zOS to obtain a JWT for proxy mode.
+    Login,
+    /// Clear stored zOS credentials and log out.
+    Logout,
+    /// Show current authentication status.
+    Whoami,
     /// Print the help message listing available commands.
     Help,
     /// Exit the CLI gracefully.
@@ -77,6 +83,9 @@ impl Command {
             "approve" | "yes" | "y" => Self::Approve,
             "deny" | "no" | "n" => Self::Deny,
             "diff" | "d" => Self::Diff,
+            "login" => Self::Login,
+            "logout" => Self::Logout,
+            "whoami" | "me" => Self::Whoami,
             "help" | "?" => Self::Help,
             "quit" | "exit" | "q" => Self::Quit,
             _ => Self::Unknown(cmd),
@@ -128,6 +137,9 @@ async fn main() -> Result<()> {
                     Command::Approve => handle_approve(&session),
                     Command::Deny => handle_deny(&session),
                     Command::Diff => handle_diff(&session),
+                    Command::Login => handle_login(&mut session, &mut rl).await,
+                    Command::Logout => handle_logout(&mut session).await,
+                    Command::Whoami => handle_whoami(),
                     Command::Help => print_help(),
                     Command::Quit => {
                         println!("{}", "Goodbye!".yellow());
@@ -247,6 +259,123 @@ fn handle_diff(_session: &Session) {
     println!();
 }
 
+/// Prompt for zOS credentials and authenticate to obtain a JWT.
+async fn handle_login(session: &mut Session, rl: &mut Editor<(), DefaultHistory>) {
+    let email = match rl.readline("  Email: ") {
+        Ok(e) if !e.trim().is_empty() => e.trim().to_string(),
+        Ok(_) => {
+            println!("{} Email cannot be empty", "Error:".red().bold());
+            println!();
+            return;
+        }
+        Err(_) => {
+            println!("{} Login cancelled", "ℹ".blue().bold());
+            println!();
+            return;
+        }
+    };
+
+    let password = match rpassword::prompt_password_stdout("  Password: ") {
+        Ok(ref p) if !p.is_empty() => p.clone(),
+        Ok(_) => {
+            println!("{} Password cannot be empty", "Error:".red().bold());
+            println!();
+            return;
+        }
+        Err(e) => {
+            eprintln!("{} Failed to read password: {e}", "Error:".red().bold());
+            println!();
+            return;
+        }
+    };
+
+    println!("{} Authenticating...", "▶".blue().bold());
+
+    let client = match aura_auth::ZosClient::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{} {e}", "Error:".red().bold());
+            println!();
+            return;
+        }
+    };
+
+    match client.login(&email, &password).await {
+        Ok(stored) => {
+            let display = stored.display_name.clone();
+            let zid = stored.primary_zid.clone();
+            let token = stored.access_token.clone();
+
+            if let Err(e) = aura_auth::CredentialStore::save(&stored) {
+                eprintln!("{} Failed to save credentials: {e}", "Error:".red().bold());
+                println!();
+                return;
+            }
+
+            session.set_auth_token(Some(token));
+
+            println!(
+                "{} Logged in as {} ({})",
+                "✓".green().bold(),
+                display.green(),
+                zid,
+            );
+        }
+        Err(e) => {
+            eprintln!("{} Login failed: {e}", "Error:".red().bold());
+        }
+    }
+    println!();
+}
+
+/// Clear stored credentials and invalidate the remote session.
+async fn handle_logout(session: &mut Session) {
+    if let Some(stored) = aura_auth::CredentialStore::load() {
+        let client = match aura_auth::ZosClient::new() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{} {e}", "Error:".red().bold());
+                println!();
+                return;
+            }
+        };
+        client.logout(&stored.access_token).await;
+    }
+
+    if let Err(e) = aura_auth::CredentialStore::clear() {
+        eprintln!("{} Failed to clear credentials: {e}", "Error:".red().bold());
+        println!();
+        return;
+    }
+
+    session.set_auth_token(None);
+    println!("{} Logged out", "✓".green().bold());
+    println!();
+}
+
+/// Show current authentication status from stored credentials.
+fn handle_whoami() {
+    match aura_auth::CredentialStore::load() {
+        Some(session) => {
+            println!("{}", "Authentication".cyan().bold());
+            println!("  Name:    {}", session.display_name);
+            println!("  zID:     {}", session.primary_zid);
+            println!("  User ID: {}", session.user_id);
+            println!(
+                "  Since:   {}",
+                session.created_at.format("%Y-%m-%d %H:%M UTC")
+            );
+        }
+        None => {
+            println!(
+                "{} Not logged in. Use /login to authenticate.",
+                "ℹ".blue().bold()
+            );
+        }
+    }
+    println!();
+}
+
 /// Print the available commands and their descriptions.
 fn print_help() {
     println!("{}", "Available Commands".cyan().bold());
@@ -257,11 +386,34 @@ fn print_help() {
     println!("  {}  Approve pending tool request", "/approve".green());
     println!("  {}     Deny pending tool request", "/deny".green());
     println!("  {}     Show pending file changes", "/diff".green());
+    println!("  {}    Login to zOS for proxy mode", "/login".green());
+    println!("  {}   Clear stored credentials", "/logout".green());
+    println!("  {}   Show auth status", "/whoami".green());
     println!("  {}     Show this help message", "/help".green());
     println!("  {}     Exit the CLI", "/quit".green());
     println!();
-    println!("  Shortcuts: /s, /h, /y, /n, /d, /?, /q");
+    println!("  Shortcuts: /s, /h, /y, /n, /d, /me, /?, /q");
     println!();
+}
+
+fn banner() -> String {
+    format!(
+        r"
+{}
+Version: {}
+Type /help for available commands.
+",
+        r"
+    _   _   _ ____      _    
+   / \ | | | |  _ \    / \   
+  / _ \| | | | |_) |  / _ \  
+ / ___ \ |_| |  _ <  / ___ \ 
+/_/   \_\___/|_| \_\/_/   \_\
+"
+        .cyan()
+        .bold(),
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 #[cfg(test)]
@@ -378,24 +530,23 @@ mod tests {
         assert!(matches!(Command::parse("/Help"), Command::Help));
         assert!(matches!(Command::parse("/DIFF"), Command::Diff));
     }
-}
 
-fn banner() -> String {
-    format!(
-        r"
-{}
-Version: {}
-Type /help for available commands.
-",
-        r"
-    _   _   _ ____      _    
-   / \ | | | |  _ \    / \   
-  / _ \| | | | |_) |  / _ \  
- / ___ \ |_| |  _ <  / ___ \ 
-/_/   \_\___/|_| \_\/_/   \_\
-"
-        .cyan()
-        .bold(),
-        env!("CARGO_PKG_VERSION")
-    )
+    #[test]
+    fn test_parse_login() {
+        assert!(matches!(Command::parse("/login"), Command::Login));
+        assert!(matches!(Command::parse("/LOGIN"), Command::Login));
+    }
+
+    #[test]
+    fn test_parse_logout() {
+        assert!(matches!(Command::parse("/logout"), Command::Logout));
+        assert!(matches!(Command::parse("/LOGOUT"), Command::Logout));
+    }
+
+    #[test]
+    fn test_parse_whoami() {
+        assert!(matches!(Command::parse("/whoami"), Command::Whoami));
+        assert!(matches!(Command::parse("/me"), Command::Whoami));
+        assert!(matches!(Command::parse("/WHOAMI"), Command::Whoami));
+    }
 }

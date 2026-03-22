@@ -108,6 +108,11 @@ impl AgentLoop {
         Self { config }
     }
 
+    /// Update the auth token used for subsequent model requests.
+    pub fn set_auth_token(&mut self, token: Option<String>) {
+        self.config.auth_token = token;
+    }
+
     /// Run the agent loop with the given provider, executor, and initial messages.
     ///
     /// Backward-compatible entry point that delegates to

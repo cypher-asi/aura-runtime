@@ -181,6 +181,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aura-agent",
+ "aura-auth",
  "aura-core",
  "aura-executor",
  "aura-kernel",
@@ -189,6 +190,7 @@ dependencies = [
  "aura-tools",
  "colored",
  "dirs",
+ "rpassword",
  "rustyline",
  "serde_json",
  "tokio",
@@ -2143,6 +2145,16 @@ checksum = "6bd13e55d6d7b8cd0ea569161127567cd587676c99f4472f779a0279aa60a7a7"
 dependencies = [
  "libc",
  "librocksdb-sys",
+]
+
+[[package]]
+name = "rpassword"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffc936cf8a7ea60c58f030fd36a612a48f440610214dc54bc36431f9ea0c3efb"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]

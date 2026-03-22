@@ -62,9 +62,9 @@ impl SessionConfig {
             loop_config.model = v;
         }
 
-        if let Ok(jwt) = std::env::var("AURA_ROUTER_JWT") {
-            loop_config.auth_token = Some(jwt);
-        }
+        loop_config.auth_token = std::env::var("AURA_ROUTER_JWT")
+            .ok()
+            .or_else(aura_auth::CredentialStore::load_token);
 
         Self {
             data_dir,
@@ -199,6 +199,14 @@ impl Session {
         self.messages.clone_from(&result.messages);
 
         Ok(result)
+    }
+
+    /// Update the auth token for subsequent model requests.
+    ///
+    /// Called after `/login` or `/logout` to apply the new token without
+    /// restarting the session.
+    pub fn set_auth_token(&mut self, token: Option<String>) {
+        self.agent_loop.set_auth_token(token);
     }
 
     /// Approve the pending tool request.
