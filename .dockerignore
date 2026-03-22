@@ -1,0 +1,12 @@
+target/
+.git/
+.data/
+.cursor/
+.vscode/
+.env
+*.log
+*.swp
+*.swo
+*~
+Dockerfile
+.dockerignore
