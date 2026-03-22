@@ -35,11 +35,13 @@ mod build;
 mod compaction;
 mod constants;
 mod helpers;
+mod kernel_executor;
 mod read_guard;
 mod sanitize;
 pub mod types;
 
 pub use agent_loop::{AgentLoop, AgentLoopConfig};
+pub use kernel_executor::KernelToolExecutor;
 pub use types::{
     AgentLoopResult, AgentToolExecutor, AutoBuildResult, BuildBaseline, ToolCallInfo,
     ToolCallResult,

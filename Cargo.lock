@@ -116,6 +116,7 @@ name = "aura"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aura-agent",
  "aura-core",
  "aura-executor",
  "aura-kernel",
@@ -149,6 +150,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aura-core",
+ "aura-executor",
  "aura-kernel",
  "aura-reasoner",
  "serde",
@@ -164,6 +166,7 @@ name = "aura-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aura-agent",
  "aura-core",
  "aura-executor",
  "aura-kernel",

@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 aura-core = { path = "../aura-core" }
+aura-agent = { path = "../aura-agent" }
 aura-store = { path = "../aura-store" }
 aura-executor = { path = "../aura-executor" }
 aura-reasoner = { path = "../aura-reasoner" }

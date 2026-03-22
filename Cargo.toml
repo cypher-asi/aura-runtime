@@ -16,6 +16,7 @@ aura-store = { path = "aura-store" }
 aura-executor = { path = "aura-executor" }
 aura-reasoner = { path = "aura-reasoner" }
 aura-tools = { path = "aura-tools" }
+aura-agent = { path = "aura-agent" }
 anyhow = "1.0"
 tokio = { version = "1.35", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
