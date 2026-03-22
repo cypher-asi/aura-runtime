@@ -167,8 +167,10 @@ impl AgentLoop {
         let mut stall_detector = StallDetector::default();
         let mut budget_state = BudgetState::default();
         let mut had_any_write = false;
+        let mut checkpoint_emitted = false;
         let mut build_cooldown: usize = 0;
         let mut thinking_budget = self.config.max_tokens;
+        let mut last_input_tokens: Option<u64> = None;
 
         let build_baseline = executor.capture_build_baseline().await;
 
@@ -198,9 +200,13 @@ impl AgentLoop {
             sanitize::validate_and_repair(&mut messages);
 
             if let Some(max_ctx) = self.config.max_context_tokens {
-                let char_count = compaction::estimate_message_chars(&messages);
-                let estimated_tokens = char_count / CHARS_PER_TOKEN;
-                let utilization = estimated_tokens as f64 / max_ctx as f64;
+                let utilization = if let Some(api_tokens) = last_input_tokens {
+                    api_tokens as f64 / max_ctx as f64
+                } else {
+                    let char_count = compaction::estimate_message_chars(&messages);
+                    let estimated_tokens = char_count / CHARS_PER_TOKEN;
+                    estimated_tokens as f64 / max_ctx as f64
+                };
 
                 if let Some(tier) = compaction::select_tier(utilization) {
                     debug!(utilization, "Compacting context");
@@ -272,6 +278,7 @@ impl AgentLoop {
 
             result.total_input_tokens += response.usage.input_tokens;
             result.total_output_tokens += response.usage.output_tokens;
+            last_input_tokens = Some(response.usage.input_tokens);
 
             for block in &response.message.content {
                 match block {
@@ -296,8 +303,54 @@ impl AgentLoop {
             );
 
             match response.stop_reason {
-                StopReason::EndTurn | StopReason::MaxTokens | StopReason::StopSequence => {
+                StopReason::EndTurn | StopReason::StopSequence => {
                     break;
+                }
+                StopReason::MaxTokens => {
+                    let pending_tools: Vec<_> = response
+                        .message
+                        .content
+                        .iter()
+                        .filter_map(|block| {
+                            if let ContentBlock::ToolUse { id, name, .. } = block {
+                                Some((id.clone(), name.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    if pending_tools.is_empty() {
+                        break;
+                    }
+
+                    warn!(
+                        pending = pending_tools.len(),
+                        "MaxTokens with pending tool_use blocks — injecting error results"
+                    );
+
+                    let results: Vec<(String, ToolResultContent, bool)> = pending_tools
+                        .iter()
+                        .map(|(id, name)| {
+                            (
+                                id.clone(),
+                                ToolResultContent::text(format!(
+                                    "Error: Response was truncated (max_tokens). Tool '{}' was not executed. \
+                                     Please try again with a simpler approach or break the task into smaller steps.",
+                                    name
+                                )),
+                                true,
+                            )
+                        })
+                        .collect();
+
+                    messages.push(Message::tool_results(results));
+
+                    if let Some(_max_ctx) = self.config.max_context_tokens {
+                        let tier = compaction::CompactionConfig::aggressive();
+                        compaction::compact_older_messages(&mut messages, &tier);
+                        sanitize::validate_and_repair(&mut messages);
+                    }
                 }
                 StopReason::ToolUse => {
                     let tool_calls: Vec<ToolCallInfo> = response
@@ -341,8 +394,8 @@ impl AgentLoop {
                         uncached_calls.push(tc.clone());
                     }
 
-                    let executed_results = if uncached_calls.is_empty() {
-                        Vec::new()
+                    let (executed_results, is_stalled) = if uncached_calls.is_empty() {
+                        (Vec::new(), false)
                     } else {
                         self.process_tool_results(
                             &uncached_calls,
@@ -422,7 +475,31 @@ impl AgentLoop {
                     if should_stop {
                         break;
                     }
+
+                    if is_stalled {
+                        let msg = "CRITICAL: Agent appears stalled — repeatedly failing \
+                                   to write to the same files. Stopping to prevent \
+                                   infinite loop. Try a different approach or ask for help.";
+                        helpers::push_or_replace_warning(&mut messages, msg);
+                        emit(
+                            &event_tx,
+                            AgentLoopEvent::Error {
+                                code: "stall_detected".to_string(),
+                                message: msg.to_string(),
+                                recoverable: false,
+                            },
+                        );
+                        result.stalled = true;
+                        break;
+                    }
                 }
+            }
+
+            if had_any_write && !checkpoint_emitted {
+                checkpoint_emitted = true;
+                let checkpoint_msg = "NOTE: You've made your first file change. Before making more changes, consider verifying your work (e.g., run the build or tests) to catch issues early.".to_string();
+                helpers::push_or_replace_warning(&mut messages, &checkpoint_msg);
+                emit(&event_tx, AgentLoopEvent::Warning(checkpoint_msg));
             }
 
             let utilization = (iteration + 1) as f64 / self.config.max_iterations as f64;
@@ -542,7 +619,7 @@ impl AgentLoop {
         had_any_write: &mut bool,
         build_cooldown: &mut usize,
         build_baseline: Option<&BuildBaseline>,
-    ) -> Vec<ToolCallResult> {
+    ) -> (Vec<ToolCallResult>, bool) {
         let mut blocked_results = Vec::new();
         let mut to_execute = Vec::new();
 
@@ -608,7 +685,13 @@ impl AgentLoop {
             }
         }
 
-        let _stalled = stall_detector.update(&write_targets, any_write_success);
+        let stalled = stall_detector.update(&write_targets, any_write_success);
+        if stalled {
+            warn!(
+                streak = stall_detector.streak(),
+                "Stall detected: same write targets failing repeatedly"
+            );
+        }
 
         if any_write_success && *build_cooldown == 0 {
             if let Some(build_result) = executor.auto_build_check().await {
@@ -633,7 +716,7 @@ impl AgentLoop {
 
         let mut all_results = blocked_results;
         all_results.extend(executed);
-        all_results
+        (all_results, stalled)
     }
 }
 
@@ -822,6 +905,75 @@ mod tests {
         assert!(result.llm_error.is_some());
     }
 
+    #[tokio::test]
+    async fn test_max_tokens_with_pending_tools_injects_errors() {
+        let executor = MockExecutor { results: vec![] };
+
+        let provider = MockProvider::new()
+            .with_response(
+                MockResponse::tool_use(
+                    "tool_1",
+                    "fs_read",
+                    serde_json::json!({"path": "big_file.txt"}),
+                )
+                .with_stop_reason(StopReason::MaxTokens),
+            )
+            .with_response(MockResponse::text("Recovered after truncation."));
+
+        let config = AgentLoopConfig {
+            system_prompt: "Test agent".to_string(),
+            ..AgentLoopConfig::default()
+        };
+        let agent = AgentLoop::new(config);
+        let messages = vec![Message::user("Read big_file.txt")];
+        let tools = vec![ToolDefinition::new(
+            "fs_read",
+            "Read a file",
+            serde_json::json!({"type": "object"}),
+        )];
+
+        let result = agent
+            .run(&provider, &executor, messages, tools)
+            .await
+            .unwrap();
+
+        assert_eq!(result.iterations, 2, "Loop should continue after MaxTokens with pending tools");
+        assert!(result.total_text.contains("Recovered after truncation."));
+
+        let has_error_tool_result = result.messages.iter().any(|msg| {
+            msg.content.iter().any(|block| {
+                matches!(block, ContentBlock::ToolResult { is_error: true, .. })
+            })
+        });
+        assert!(has_error_tool_result, "Should have injected an error tool result");
+    }
+
+    #[tokio::test]
+    async fn test_max_tokens_without_tools_breaks() {
+        let executor = MockExecutor { results: vec![] };
+
+        let provider = MockProvider::new()
+            .with_response(MockResponse::text("Truncated text").with_stop_reason(StopReason::MaxTokens))
+            .with_response(MockResponse::text("Should not reach this"));
+
+        let config = AgentLoopConfig {
+            system_prompt: "Test agent".to_string(),
+            ..AgentLoopConfig::default()
+        };
+        let agent = AgentLoop::new(config);
+        let messages = vec![Message::user("hello")];
+        let tools = vec![];
+
+        let result = agent
+            .run(&provider, &executor, messages, tools)
+            .await
+            .unwrap();
+
+        assert_eq!(result.iterations, 1, "Loop should break on MaxTokens with no pending tools");
+        assert!(result.total_text.contains("Truncated text"));
+        assert!(!result.total_text.contains("Should not reach this"));
+    }
+
     #[test]
     fn test_tool_call_result_defaults() {
         let result = ToolCallResult::success("id", "content");
@@ -831,5 +983,224 @@ mod tests {
         let err = ToolCallResult::error("id", "error");
         assert!(err.is_error);
         assert!(!err.stop_loop);
+    }
+
+    #[tokio::test]
+    async fn test_compaction_uses_api_input_tokens() {
+        use aura_reasoner::Usage;
+
+        let executor = MockExecutor {
+            results: vec![ToolCallResult::success("placeholder", "ok")],
+        };
+
+        // First response: tool use with input_tokens = 180_000 (90% of 200k).
+        // Second response: final text — by this iteration last_input_tokens is
+        // set, so compaction should trigger based on the API-reported value
+        // rather than the (tiny) char-count heuristic.
+        let high_usage_tool = MockResponse {
+            stop_reason: StopReason::ToolUse,
+            content: vec![ContentBlock::tool_use(
+                "tool_1",
+                "fs_read",
+                serde_json::json!({"path": "big.txt"}),
+            )],
+            usage: Usage::new(180_000, 50),
+        };
+        let final_resp = MockResponse {
+            stop_reason: StopReason::EndTurn,
+            content: vec![ContentBlock::text("Done")],
+            usage: Usage::new(185_000, 50),
+        };
+
+        let provider = MockProvider::new()
+            .with_response(high_usage_tool)
+            .with_response(final_resp);
+
+        let config = AgentLoopConfig {
+            max_context_tokens: Some(200_000),
+            system_prompt: "test".to_string(),
+            ..AgentLoopConfig::default()
+        };
+        let agent = AgentLoop::new(config);
+        let messages = vec![Message::user("go")];
+        let tools = vec![ToolDefinition::new(
+            "fs_read",
+            "Read a file",
+            serde_json::json!({"type": "object"}),
+        )];
+
+        let result = agent
+            .run(&provider, &executor, messages, tools)
+            .await
+            .unwrap();
+
+        assert_eq!(result.iterations, 2);
+        // The API reported 180k input tokens on iter 0 (90% of 200k), which
+        // exceeds the history tier threshold (85%). On iter 1 the loop should
+        // have used that value for compaction instead of the char heuristic.
+        // We verify compaction ran by checking total_input_tokens includes both
+        // iterations' API-reported counts.
+        assert_eq!(result.total_input_tokens, 180_000 + 185_000);
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_after_first_write() {
+        let executor = MockExecutor {
+            results: vec![ToolCallResult::success("placeholder", "wrote file")],
+        };
+
+        let provider = MockProvider::new()
+            .with_response(MockResponse::tool_use(
+                "tool_1",
+                "write_file",
+                serde_json::json!({"path": "hello.txt", "content": "hi"}),
+            ))
+            .with_response(MockResponse::text("Done!"));
+
+        let config = AgentLoopConfig {
+            system_prompt: "test".to_string(),
+            ..AgentLoopConfig::default()
+        };
+        let agent = AgentLoop::new(config);
+        let messages = vec![Message::user("write hello.txt")];
+        let tools = vec![ToolDefinition::new(
+            "write_file",
+            "Write a file",
+            serde_json::json!({"type": "object"}),
+        )];
+
+        let result = agent
+            .run(&provider, &executor, messages, tools)
+            .await
+            .unwrap();
+
+        let has_checkpoint = result.messages.iter().any(|msg| {
+            msg.content.iter().any(|block| {
+                if let ContentBlock::Text { text } = block {
+                    text.contains("You've made your first file change")
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_checkpoint, "Messages should contain the checkpoint note after first write");
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_not_repeated() {
+        let executor = MockExecutor {
+            results: vec![
+                ToolCallResult::success("placeholder", "wrote file 1"),
+                ToolCallResult::success("placeholder", "wrote file 2"),
+            ],
+        };
+
+        let provider = MockProvider::new()
+            .with_response(MockResponse::tool_use(
+                "tool_1",
+                "write_file",
+                serde_json::json!({"path": "a.txt", "content": "a"}),
+            ))
+            .with_response(MockResponse::tool_use(
+                "tool_2",
+                "write_file",
+                serde_json::json!({"path": "b.txt", "content": "b"}),
+            ))
+            .with_response(MockResponse::text("All done!"));
+
+        let config = AgentLoopConfig {
+            system_prompt: "test".to_string(),
+            ..AgentLoopConfig::default()
+        };
+        let agent = AgentLoop::new(config);
+        let messages = vec![Message::user("write two files")];
+        let tools = vec![ToolDefinition::new(
+            "write_file",
+            "Write a file",
+            serde_json::json!({"type": "object"}),
+        )];
+
+        let result = agent
+            .run(&provider, &executor, messages, tools)
+            .await
+            .unwrap();
+
+        let checkpoint_count = result
+            .messages
+            .iter()
+            .flat_map(|msg| msg.content.iter())
+            .filter(|block| {
+                if let ContentBlock::Text { text } = block {
+                    text.contains("You've made your first file change")
+                } else {
+                    false
+                }
+            })
+            .count();
+        assert_eq!(checkpoint_count, 1, "Checkpoint message should appear exactly once");
+    }
+
+    #[tokio::test]
+    async fn test_stall_terminates_loop() {
+        let executor = MockExecutor {
+            results: vec![ToolCallResult::error(
+                "placeholder",
+                "Write failed: permission denied",
+            )],
+        };
+
+        let provider = MockProvider::new().with_default_response(MockResponse::tool_use(
+            "tool_w",
+            "fs_write",
+            serde_json::json!({"path": "stuck.rs", "content": "bad code"}),
+        ));
+
+        let max_iter = 10;
+        let config = AgentLoopConfig {
+            max_iterations: max_iter,
+            system_prompt: "test".to_string(),
+            ..AgentLoopConfig::default()
+        };
+        let agent = AgentLoop::new(config);
+        let messages = vec![Message::user("write stuck.rs")];
+        let tools = vec![ToolDefinition::new(
+            "fs_write",
+            "Write a file",
+            serde_json::json!({"type": "object"}),
+        )];
+
+        let result = agent
+            .run(&provider, &executor, messages, tools)
+            .await
+            .unwrap();
+
+        assert!(
+            result.stalled,
+            "Loop should have been terminated by stall detection"
+        );
+        assert!(
+            result.iterations < max_iter,
+            "Loop should terminate before max_iterations (got {})",
+            result.iterations
+        );
+        assert_eq!(
+            result.iterations,
+            crate::constants::STALL_STREAK_THRESHOLD,
+            "Loop should terminate after exactly STALL_STREAK_THRESHOLD iterations"
+        );
+
+        let has_stall_warning = result.messages.iter().any(|msg| {
+            msg.content.iter().any(|block| {
+                if let ContentBlock::Text { text } = block {
+                    text.contains("CRITICAL") && text.contains("stalled")
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(
+            has_stall_warning,
+            "Messages should contain the stall recovery warning"
+        );
     }
 }

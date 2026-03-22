@@ -76,6 +76,8 @@ pub struct AgentLoopResult {
     pub timed_out: bool,
     /// Whether the loop stopped due to insufficient credits.
     pub insufficient_credits: bool,
+    /// Whether the loop stopped due to stall detection.
+    pub stalled: bool,
     /// LLM error that terminated the loop, if any.
     pub llm_error: Option<String>,
     /// Accumulated assistant text across all iterations.

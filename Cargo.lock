@@ -153,11 +153,13 @@ dependencies = [
  "aura-executor",
  "aura-kernel",
  "aura-reasoner",
+ "futures-util",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

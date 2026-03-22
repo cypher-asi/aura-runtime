@@ -83,6 +83,13 @@ impl MockResponse {
         }
     }
 
+    /// Override the stop reason on an existing response.
+    #[must_use]
+    pub fn with_stop_reason(mut self, stop_reason: StopReason) -> Self {
+        self.stop_reason = stop_reason;
+        self
+    }
+
     /// Create a response with text and tool use.
     #[must_use]
     pub fn text_and_tool(
