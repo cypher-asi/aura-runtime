@@ -230,6 +230,7 @@ impl ModelProvider for MockProvider {
             },
             usage: response.usage,
             trace: ProviderTrace::new("mock-model", self.latency_ms),
+            model_used: "mock-model".to_string(),
         })
     }
 

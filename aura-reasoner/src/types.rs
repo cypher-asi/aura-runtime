@@ -426,6 +426,12 @@ pub struct Usage {
     pub input_tokens: u32,
     /// Number of output tokens
     pub output_tokens: u32,
+    /// Cache creation input tokens (prompt caching).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u32>,
+    /// Cache read input tokens (prompt caching).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u32>,
 }
 
 impl Usage {
@@ -435,6 +441,8 @@ impl Usage {
         Self {
             input_tokens,
             output_tokens,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
         }
     }
 
@@ -442,6 +450,14 @@ impl Usage {
     #[must_use]
     pub const fn total(&self) -> u32 {
         self.input_tokens + self.output_tokens
+    }
+
+    /// Set cache token counts.
+    #[must_use]
+    pub const fn with_cache(mut self, creation: Option<u32>, read: Option<u32>) -> Self {
+        self.cache_creation_input_tokens = creation;
+        self.cache_read_input_tokens = read;
+        self
     }
 }
 
@@ -495,22 +511,26 @@ pub struct ModelResponse {
     pub usage: Usage,
     /// Provider trace information
     pub trace: ProviderTrace,
+    /// Which model actually served the request (relevant after fallback).
+    pub model_used: String,
 }
 
 impl ModelResponse {
     /// Create a new model response.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         stop_reason: StopReason,
         message: Message,
         usage: Usage,
         trace: ProviderTrace,
     ) -> Self {
+        let model_used = trace.model.clone();
         Self {
             stop_reason,
             message,
             usage,
             trace,
+            model_used,
         }
     }
 
@@ -543,6 +563,12 @@ pub enum StreamEvent {
         message_id: String,
         /// Model being used
         model: String,
+        /// Input tokens (from SSE `message_start` usage)
+        input_tokens: Option<u32>,
+        /// Cache creation input tokens (prompt caching)
+        cache_creation_input_tokens: Option<u32>,
+        /// Cache read input tokens (prompt caching)
+        cache_read_input_tokens: Option<u32>,
     },
 
     /// Start of a new content block
@@ -647,6 +673,10 @@ pub struct StreamAccumulator {
     pub input_tokens: u32,
     /// Output tokens
     pub output_tokens: u32,
+    /// Cache creation input tokens (prompt caching)
+    pub cache_creation_input_tokens: Option<u32>,
+    /// Cache read input tokens (prompt caching)
+    pub cache_read_input_tokens: Option<u32>,
 }
 
 /// Tool use being accumulated from streaming events.
@@ -670,9 +700,20 @@ impl StreamAccumulator {
     /// Process a streaming event.
     pub fn process(&mut self, event: &StreamEvent) {
         match event {
-            StreamEvent::MessageStart { message_id, model } => {
+            StreamEvent::MessageStart {
+                message_id,
+                model,
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+            } => {
                 self.message_id.clone_from(message_id);
                 self.model.clone_from(model);
+                if let Some(tokens) = input_tokens {
+                    self.input_tokens = *tokens;
+                }
+                self.cache_creation_input_tokens = *cache_creation_input_tokens;
+                self.cache_read_input_tokens = *cache_read_input_tokens;
             }
             StreamEvent::ContentBlockStart { content_type, .. } => match content_type {
                 StreamContentType::ToolUse { id, name } => {
@@ -736,6 +777,12 @@ impl StreamAccumulator {
         input_tokens: u32,
         latency_ms: u64,
     ) -> anyhow::Result<ModelResponse> {
+        let effective_input_tokens = if self.input_tokens > 0 {
+            self.input_tokens
+        } else {
+            input_tokens
+        };
+
         let mut content_blocks = Vec::new();
 
         // Add thinking content first if present (it comes before text in the response)
@@ -774,18 +821,23 @@ impl StreamAccumulator {
             content: content_blocks,
         };
 
+        let model_used = self.model.clone();
+
         Ok(ModelResponse {
             stop_reason: self.stop_reason.unwrap_or(StopReason::EndTurn),
             message,
             usage: Usage {
-                input_tokens,
+                input_tokens: effective_input_tokens,
                 output_tokens: self.output_tokens,
+                cache_creation_input_tokens: self.cache_creation_input_tokens,
+                cache_read_input_tokens: self.cache_read_input_tokens,
             },
             trace: ProviderTrace {
                 request_id: Some(self.message_id),
                 latency_ms,
                 model: self.model,
             },
+            model_used,
         })
     }
 }
@@ -1086,6 +1138,9 @@ mod tests {
         acc.process(&StreamEvent::MessageStart {
             message_id: "msg1".to_string(),
             model: "claude".to_string(),
+            input_tokens: None,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
         });
         acc.process(&StreamEvent::ContentBlockStart {
             index: 0,
@@ -1118,6 +1173,9 @@ mod tests {
         acc.process(&StreamEvent::MessageStart {
             message_id: "msg1".to_string(),
             model: "claude".to_string(),
+            input_tokens: None,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
         });
         acc.process(&StreamEvent::ContentBlockStart {
             index: 0,
@@ -1216,6 +1274,9 @@ mod tests {
         acc.process(&StreamEvent::MessageStart {
             message_id: "msg123".to_string(),
             model: "claude-opus-4-5-20251101".to_string(),
+            input_tokens: None,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
         });
         acc.process(&StreamEvent::ContentBlockStart {
             index: 0,
@@ -1316,7 +1377,7 @@ mod tests {
         acc.tool_uses.push(AccumulatedToolUse {
             id: "tool1".to_string(),
             name: "test".to_string(),
-            input_json: "".to_string(),
+            input_json: String::new(),
         });
 
         let response = acc.into_response(0, 0).unwrap();
@@ -1390,5 +1451,63 @@ mod tests {
         assert_eq!(trace.model, "claude");
         assert_eq!(trace.latency_ms, 500);
         assert_eq!(trace.request_id, Some("req123".to_string()));
+    }
+
+    // ========================================================================
+    // Usage Cache Tests
+    // ========================================================================
+
+    #[test]
+    fn test_usage_with_cache_tokens() {
+        let usage = Usage::new(100, 50).with_cache(Some(80), Some(20));
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.cache_creation_input_tokens, Some(80));
+        assert_eq!(usage.cache_read_input_tokens, Some(20));
+        assert_eq!(usage.total(), 150);
+    }
+
+    #[test]
+    fn test_usage_default_has_no_cache() {
+        let usage = Usage::default();
+        assert_eq!(usage.cache_creation_input_tokens, None);
+        assert_eq!(usage.cache_read_input_tokens, None);
+    }
+
+    // ========================================================================
+    // StreamAccumulator Input Tokens from MessageStart
+    // ========================================================================
+
+    #[test]
+    fn test_stream_accumulator_input_tokens_from_message_start() {
+        let mut acc = StreamAccumulator::new();
+
+        acc.process(&StreamEvent::MessageStart {
+            message_id: "msg_cache".to_string(),
+            model: "claude".to_string(),
+            input_tokens: Some(200),
+            cache_creation_input_tokens: Some(150),
+            cache_read_input_tokens: Some(50),
+        });
+        acc.process(&StreamEvent::ContentBlockStart {
+            index: 0,
+            content_type: StreamContentType::Text,
+        });
+        acc.process(&StreamEvent::TextDelta {
+            text: "Cached!".to_string(),
+        });
+        acc.process(&StreamEvent::ContentBlockStop { index: 0 });
+        acc.process(&StreamEvent::MessageDelta {
+            stop_reason: Some(StopReason::EndTurn),
+            output_tokens: 3,
+        });
+
+        let response = acc.into_response(0, 100).unwrap();
+
+        // Accumulated input_tokens should take precedence over parameter (0)
+        assert_eq!(response.usage.input_tokens, 200);
+        assert_eq!(response.usage.cache_creation_input_tokens, Some(150));
+        assert_eq!(response.usage.cache_read_input_tokens, Some(50));
+        assert_eq!(response.model_used, "claude");
     }
 }

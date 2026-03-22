@@ -160,7 +160,7 @@ mod tests {
             },
         ];
 
-        let request = ProposeRequest::new(agent_id, tx).with_record_window(window.clone());
+        let request = ProposeRequest::new(agent_id, tx).with_record_window(window);
 
         assert_eq!(request.record_window.len(), 2);
         assert_eq!(request.record_window[0].seq, 1);

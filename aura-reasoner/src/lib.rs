@@ -25,12 +25,14 @@ mod anthropic;
 mod client;
 mod mock;
 mod request;
+mod retry;
 pub mod types;
 
 pub use anthropic::{AnthropicConfig, AnthropicProvider};
 pub use client::HttpReasoner;
 pub use mock::{MockProvider, MockReasoner, MockResponse};
 pub use request::{ProposeLimits, ProposeRequest, RecordSummary};
+pub use retry::{complete_with_retry, RetryConfig};
 pub use types::{
     AccumulatedToolUse, ContentBlock, Message, ModelRequest, ModelResponse, ProviderTrace, Role,
     StopReason, StreamAccumulator, StreamContentType, StreamEvent, ToolChoice, ToolDefinition,
@@ -122,6 +124,9 @@ pub trait ModelProvider: Send + Sync {
             Ok(StreamEvent::MessageStart {
                 message_id: response.trace.request_id.clone().unwrap_or_default(),
                 model: response.trace.model.clone(),
+                input_tokens: Some(response.usage.input_tokens),
+                cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
+                cache_read_input_tokens: response.usage.cache_read_input_tokens,
             }),
             Ok(StreamEvent::ContentBlockStart {
                 index: 0,

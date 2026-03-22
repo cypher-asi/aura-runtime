@@ -105,7 +105,7 @@ mod tests {
             max_retries: 3,
         };
 
-        let reasoner = HttpReasoner::new(config.clone());
+        let reasoner = HttpReasoner::new(config);
         assert!(reasoner.is_ok());
 
         let reasoner = reasoner.unwrap();
