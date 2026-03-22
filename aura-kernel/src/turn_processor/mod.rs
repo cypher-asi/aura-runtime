@@ -376,6 +376,10 @@ where
     /// Convert turn results to a `RecordEntry` for storage.
     ///
     /// This properly records all tool calls with their full information (tool name, args, results).
+    ///
+    /// # Errors
+    ///
+    /// Returns `AuraError::Serialization` if tool call delegation payloads cannot be serialized.
     pub fn to_record_entry(
         &self,
         seq: u64,
@@ -749,8 +753,7 @@ mod tests {
         };
 
         let token = CancellationToken::new();
-        let mut processor =
-            TurnProcessor::new(provider, store, executor, tool_registry, config);
+        let mut processor = TurnProcessor::new(provider, store, executor, tool_registry, config);
         processor.set_cancellation_token(token.clone());
 
         // Cancel immediately

@@ -22,11 +22,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 
 # Error handling
-thiserror = { workspace = true }
 anyhow = { workspace = true }
-
-# Shared types
-aura-core = { path = "../aura-core" }
 
 # Tracing
 tracing = { workspace = true }

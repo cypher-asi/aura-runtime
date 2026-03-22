@@ -10,7 +10,9 @@ mod search;
 mod stat;
 mod write;
 
-pub use cmd::{cmd_run_with_threshold, cmd_spawn, output_to_tool_result, CmdRunTool, ThresholdResult};
+pub use cmd::{
+    cmd_run_with_threshold, cmd_spawn, output_to_tool_result, CmdRunTool, ThresholdResult,
+};
 pub use delete::FsDeleteTool;
 pub use edit::FsEditTool;
 pub use find::FsFindTool;

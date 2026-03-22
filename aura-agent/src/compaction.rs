@@ -181,32 +181,7 @@ pub fn try_signature_compact(content: &str) -> Option<String> {
                 || trimmed.starts_with("pub const fn ")
                 || trimmed.starts_with("const fn ");
 
-            if !in_body {
-                if is_sig_line && line_buf.contains('{') {
-                    result.push_str(&line_buf);
-                    result.push('\n');
-
-                    let open_count = line_buf.chars().filter(|&c| c == '{').count() as i32;
-                    let close_count = line_buf.chars().filter(|&c| c == '}').count() as i32;
-                    brace_depth += open_count - close_count;
-
-                    if brace_depth > 0 {
-                        in_body = true;
-                        body_start_depth = brace_depth - 1;
-                        wrote_placeholder = false;
-                    }
-                } else {
-                    for c in line_buf.chars() {
-                        match c {
-                            '{' => brace_depth += 1,
-                            '}' => brace_depth -= 1,
-                            _ => {}
-                        }
-                    }
-                    result.push_str(&line_buf);
-                    result.push('\n');
-                }
-            } else {
+            if in_body {
                 for c in line_buf.chars() {
                     match c {
                         '{' => brace_depth += 1,
@@ -226,6 +201,31 @@ pub fn try_signature_compact(content: &str) -> Option<String> {
                     result.push_str("    // ... body omitted ...\n");
                     wrote_placeholder = true;
                 }
+            } else if is_sig_line && line_buf.contains('{') {
+                result.push_str(&line_buf);
+                result.push('\n');
+
+                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                let open_count = line_buf.chars().filter(|&c| c == '{').count() as i32;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                let close_count = line_buf.chars().filter(|&c| c == '}').count() as i32;
+                brace_depth += open_count - close_count;
+
+                if brace_depth > 0 {
+                    in_body = true;
+                    body_start_depth = brace_depth - 1;
+                    wrote_placeholder = false;
+                }
+            } else {
+                for c in line_buf.chars() {
+                    match c {
+                        '{' => brace_depth += 1,
+                        '}' => brace_depth -= 1,
+                        _ => {}
+                    }
+                }
+                result.push_str(&line_buf);
+                result.push('\n');
             }
 
             line_buf.clear();
@@ -234,6 +234,7 @@ pub fn try_signature_compact(content: &str) -> Option<String> {
         }
     }
 
+    #[allow(clippy::cast_precision_loss)]
     let reduction = 1.0 - (result.len() as f64 / content.len() as f64);
     if reduction >= 0.30 {
         Some(result)
@@ -564,7 +565,10 @@ fn helper_internal() {
     fn test_truncate_exact_boundary() {
         let content = "a".repeat(100);
         let result = truncate_content(&content, 100, None, None);
-        assert_eq!(result, content, "Content at exact limit should not truncate");
+        assert_eq!(
+            result, content,
+            "Content at exact limit should not truncate"
+        );
     }
 
     #[test]

@@ -435,8 +435,7 @@ mod tests {
         )
         .unwrap();
 
-        let result =
-            search_code(&sandbox, r"alpha|gamma", None, None, 100, 0).unwrap();
+        let result = search_code(&sandbox, r"alpha|gamma", None, None, 100, 0).unwrap();
         assert_eq!(result.metadata.get("match_count").unwrap(), "2");
     }
 
@@ -445,7 +444,11 @@ mod tests {
         let (sandbox, dir) = create_test_sandbox();
 
         // Write a file with a binary extension
-        fs::write(dir.path().join("image.png"), b"fake png data with let x = 1").unwrap();
+        fs::write(
+            dir.path().join("image.png"),
+            b"fake png data with let x = 1",
+        )
+        .unwrap();
         fs::write(dir.path().join("code.rs"), "let x = 1;").unwrap();
 
         let result = search_code(&sandbox, "let x", None, None, 100, 0).unwrap();
@@ -468,8 +471,7 @@ mod tests {
 
         fs::write(dir.path().join("hint.rs"), "normal code").unwrap();
 
-        let result =
-            search_code(&sandbox, r"foo\(bar\[baz\]", None, None, 100, 0).unwrap();
+        let result = search_code(&sandbox, r"foo\(bar\[baz\]", None, None, 100, 0).unwrap();
         let output = String::from_utf8_lossy(&result.stdout);
         assert!(output.contains("No matches found"));
         assert!(output.contains("regex characters"));

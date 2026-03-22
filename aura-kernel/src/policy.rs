@@ -513,8 +513,8 @@ mod tests {
 
     #[test]
     fn test_always_ask_permission_override() {
-        let config = PolicyConfig::default()
-            .with_tool_permission("fs_read", PermissionLevel::AlwaysAsk);
+        let config =
+            PolicyConfig::default().with_tool_permission("fs_read", PermissionLevel::AlwaysAsk);
         let policy = Policy::new(config);
 
         let result = policy.check_tool("fs_read", &serde_json::json!({}));

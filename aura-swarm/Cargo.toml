@@ -31,11 +31,9 @@ blake3 = { workspace = true }
 base64 = "0.22"
 uuid = { workspace = true }
 futures-util = "0.3"
-async-trait = "0.1"
 
 [dev-dependencies]
 tempfile = { workspace = true }
-reqwest = { workspace = true }
 tower_dev = { package = "tower", version = "0.5", features = ["util"] }
 
 [lints]

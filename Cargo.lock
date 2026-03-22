@@ -130,7 +130,6 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
- "dirs",
  "dotenvy",
  "futures",
  "hex",
@@ -152,13 +151,10 @@ dependencies = [
  "async-trait",
  "aura-core",
  "aura-executor",
- "aura-kernel",
  "aura-reasoner",
  "futures-util",
- "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
@@ -176,13 +172,10 @@ dependencies = [
  "aura-reasoner",
  "aura-store",
  "aura-tools",
- "bytes",
  "colored",
  "dirs",
  "rustyline",
- "serde",
  "serde_json",
- "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -223,7 +216,6 @@ name = "aura-kernel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "aura-core",
  "aura-executor",
  "aura-reasoner",
@@ -233,7 +225,6 @@ dependencies = [
  "dashmap 6.1.0",
  "futures-util",
  "hex",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -250,13 +241,11 @@ dependencies = [
  "aura-core",
  "bytes",
  "futures-util",
- "pin-project-lite",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
- "tokio-stream",
  "tracing",
 ]
 
@@ -269,7 +258,6 @@ dependencies = [
  "futures-util",
  "proptest",
  "rocksdb",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -282,7 +270,6 @@ name = "aura-swarm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "aura-agent",
  "aura-core",
  "aura-executor",
@@ -296,7 +283,6 @@ dependencies = [
  "bytes",
  "dashmap 5.5.3",
  "futures-util",
- "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -316,14 +302,12 @@ name = "aura-terminal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "aura-core",
  "chrono",
  "crossterm",
  "ratatui",
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
  "tokio",
  "tracing",
  "unicode-width 0.2.0",
@@ -2623,17 +2607,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
 dependencies = [
  "native-tls",
- "tokio",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
-dependencies = [
- "futures-core",
- "pin-project-lite",
  "tokio",
 ]
 

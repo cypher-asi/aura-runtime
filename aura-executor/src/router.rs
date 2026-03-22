@@ -554,9 +554,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_failed_effect_preserves_action_id() {
-        let router = ExecutorRouter::with_executors(vec![Arc::new(
-            SelectiveExecutor::failing(ActionKind::Delegate),
-        )]);
+        let router = ExecutorRouter::with_executors(vec![Arc::new(SelectiveExecutor::failing(
+            ActionKind::Delegate,
+        ))]);
         let ctx = ExecuteContext::new(
             AgentId::generate(),
             ActionId::generate(),
@@ -597,7 +597,11 @@ mod tests {
         ] {
             let action = Action::new(ActionId::generate(), kind, Bytes::new());
             let effect = router.execute(&ctx, &action).await;
-            assert_eq!(effect.status, EffectStatus::Committed, "Failed for {kind:?}");
+            assert_eq!(
+                effect.status,
+                EffectStatus::Committed,
+                "Failed for {kind:?}"
+            );
         }
     }
 
@@ -618,7 +622,11 @@ mod tests {
         ] {
             let action = Action::new(ActionId::generate(), kind, Bytes::new());
             let effect = router.execute(&ctx, &action).await;
-            assert_eq!(effect.status, EffectStatus::Failed, "Should fail for {kind:?}");
+            assert_eq!(
+                effect.status,
+                EffectStatus::Failed,
+                "Should fail for {kind:?}"
+            );
         }
     }
 }

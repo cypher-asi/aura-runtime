@@ -1,4 +1,39 @@
 //! Scheduler for dispatching agent workers.
+//!
+//! # Concurrency Model
+//!
+//! The scheduler enforces a **single-writer-per-agent** invariant: at most one
+//! task may process a given agent's transaction queue at any time.  Different
+//! agents are fully independent and can be processed concurrently.
+//!
+//! ## Per-Agent Locking
+//!
+//! Each agent is assigned an [`Arc<Mutex<()>>`](tokio::sync::Mutex) stored in a
+//! [`DashMap`].  When [`Scheduler::schedule_agent`] is called:
+//!
+//! 1. A status check is performed (only `Active` agents proceed).
+//! 2. A pending-transaction check avoids acquiring the lock when the inbox is
+//!    empty.
+//! 3. The per-agent mutex is acquired (`lock().await`).
+//! 4. All pending transactions are drained inside the critical section.
+//!
+//! Because the lock is per-agent, concurrent calls for *different* agents never
+//! block each other.  Concurrent calls for the *same* agent are serialised:
+//! the second caller awaits the mutex until the first finishes.
+//!
+//! ## Failure Modes
+//!
+//! * **Panic while lock is held** – if the worker panics inside the critical
+//!   section, the [`tokio::sync::Mutex`] becomes *poisoned-free* (unlike
+//!   `std::sync::Mutex`, Tokio's mutex does **not** poison on panic).  The lock
+//!   is simply released when the `MutexGuard` is dropped during unwinding, so
+//!   the next caller can acquire it normally.  However, the agent's partially-
+//!   processed state may be inconsistent; the store's atomic-batch guarantees
+//!   prevent *partial record writes*, but the agent may have committed fewer
+//!   entries than intended.
+//! * **Lock map growth** – agent locks are never removed from the `DashMap`.
+//!   For long-running swarms with many transient agents, this could accumulate
+//!   memory.  A periodic eviction sweep is a potential future improvement.
 
 use crate::worker::process_agent;
 use aura_agent::{AgentLoop, AgentLoopConfig, KernelToolExecutor};
@@ -128,7 +163,8 @@ mod tests {
 
     fn create_test_scheduler() -> (Scheduler, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let store: Arc<dyn Store> = Arc::new(RocksStore::open(dir.path().join("db"), false).unwrap());
+        let store: Arc<dyn Store> =
+            Arc::new(RocksStore::open(dir.path().join("db"), false).unwrap());
         let provider: Arc<dyn ModelProvider + Send + Sync> =
             Arc::new(MockProvider::simple_response("test"));
         let ws_dir = dir.path().join("workspaces");
@@ -153,7 +189,8 @@ mod tests {
     #[tokio::test]
     async fn test_schedule_paused_agent_skipped() {
         let dir = tempfile::tempdir().unwrap();
-        let store: Arc<dyn Store> = Arc::new(RocksStore::open(dir.path().join("db"), false).unwrap());
+        let store: Arc<dyn Store> =
+            Arc::new(RocksStore::open(dir.path().join("db"), false).unwrap());
         let provider: Arc<dyn ModelProvider + Send + Sync> =
             Arc::new(MockProvider::simple_response("test"));
         let ws_dir = dir.path().join("workspaces");
@@ -172,16 +209,15 @@ mod tests {
     #[tokio::test]
     async fn test_schedule_dead_agent_skipped() {
         let dir = tempfile::tempdir().unwrap();
-        let store: Arc<dyn Store> = Arc::new(RocksStore::open(dir.path().join("db"), false).unwrap());
+        let store: Arc<dyn Store> =
+            Arc::new(RocksStore::open(dir.path().join("db"), false).unwrap());
         let provider: Arc<dyn ModelProvider + Send + Sync> =
             Arc::new(MockProvider::simple_response("test"));
         let ws_dir = dir.path().join("workspaces");
         std::fs::create_dir_all(&ws_dir).unwrap();
 
         let agent_id = AgentId::generate();
-        store
-            .set_agent_status(agent_id, AgentStatus::Dead)
-            .unwrap();
+        store.set_agent_status(agent_id, AgentStatus::Dead).unwrap();
 
         let scheduler = Scheduler::new(store, provider, vec![], vec![], ws_dir);
         let result = scheduler.schedule_agent(agent_id).await.unwrap();

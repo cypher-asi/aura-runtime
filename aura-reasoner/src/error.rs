@@ -61,8 +61,7 @@ mod tests {
 
     #[test]
     fn test_downcast_insufficient_credits() {
-        let err: anyhow::Error =
-            ReasonerError::InsufficientCredits("402".to_string()).into();
+        let err: anyhow::Error = ReasonerError::InsufficientCredits("402".to_string()).into();
         let downcasted = err.downcast_ref::<ReasonerError>();
         assert!(matches!(
             downcasted,

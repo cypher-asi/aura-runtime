@@ -213,17 +213,21 @@ impl KeyCodec for AgentMetaKey {
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
         if bytes.len() != 1 + 32 + 1 {
-            return Err(StoreError::InvalidKey("invalid agent meta key length".into()));
+            return Err(StoreError::InvalidKey(
+                "invalid agent meta key length".into(),
+            ));
         }
         if bytes[0] != prefix::AGENT_META {
-            return Err(StoreError::InvalidKey("invalid agent meta key prefix".into()));
+            return Err(StoreError::InvalidKey(
+                "invalid agent meta key prefix".into(),
+            ));
         }
 
         let agent_bytes: [u8; 32] = bytes[1..33]
             .try_into()
             .map_err(|_| StoreError::InvalidKey("invalid agent_id bytes".into()))?;
-        let field =
-            MetaField::from_byte(bytes[33]).ok_or_else(|| StoreError::InvalidKey("invalid meta field".into()))?;
+        let field = MetaField::from_byte(bytes[33])
+            .ok_or_else(|| StoreError::InvalidKey("invalid meta field".into()))?;
 
         Ok(Self {
             agent_id: AgentId::new(agent_bytes),

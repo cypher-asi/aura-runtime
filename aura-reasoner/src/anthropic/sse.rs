@@ -210,9 +210,7 @@ mod tests {
 
     #[test]
     fn test_parse_message_stop_event() {
-        let event = parse_sse_event(
-            "event: message_stop\ndata: {\"type\":\"message_stop\"}",
-        );
+        let event = parse_sse_event("event: message_stop\ndata: {\"type\":\"message_stop\"}");
         assert!(matches!(event, Some(StreamEvent::MessageStop)));
     }
 

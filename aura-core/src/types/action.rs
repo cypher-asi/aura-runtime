@@ -50,6 +50,10 @@ impl Action {
     /// Returns `AuraError::Serialization` if the tool call cannot be serialized.
     pub fn delegate_tool(tool_call: &ToolCall) -> Result<Self, AuraError> {
         let payload = serde_json::to_vec(tool_call)?;
-        Ok(Self::new(ActionId::generate(), ActionKind::Delegate, payload))
+        Ok(Self::new(
+            ActionId::generate(),
+            ActionKind::Delegate,
+            payload,
+        ))
     }
 }

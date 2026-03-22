@@ -14,7 +14,7 @@ use tempfile::TempDir;
 
 /// Create a test environment with store, provider, and executor.
 fn create_pipeline_env(
-    provider: Arc<dyn aura_reasoner::ModelProvider + Send + Sync>,
+    _provider: Arc<dyn aura_reasoner::ModelProvider + Send + Sync>,
 ) -> (Arc<dyn Store>, TempDir, TempDir) {
     let db_dir = TempDir::new().unwrap();
     let ws_dir = TempDir::new().unwrap();
@@ -180,10 +180,7 @@ async fn test_deterministic_processing_same_input() {
 
     assert_eq!(results[0].iterations, results[1].iterations);
     assert_eq!(results[0].total_text, results[1].total_text);
-    assert_eq!(
-        results[0].total_input_tokens,
-        results[1].total_input_tokens
-    );
+    assert_eq!(results[0].total_input_tokens, results[1].total_input_tokens);
     assert_eq!(
         results[0].total_output_tokens,
         results[1].total_output_tokens

@@ -44,9 +44,8 @@ pub async fn process_agent(
             "Processing transaction"
         );
 
-        let prompt = String::from_utf8(tx.payload.to_vec()).map_err(|e| {
-            anyhow::anyhow!("Transaction payload is not valid UTF-8: {e}")
-        })?;
+        let prompt = String::from_utf8(tx.payload.to_vec())
+            .map_err(|e| anyhow::anyhow!("Transaction payload is not valid UTF-8: {e}"))?;
         let messages = vec![Message::user(prompt)];
 
         let result = tokio::time::timeout(
@@ -158,19 +157,11 @@ mod tests {
         let config = aura_agent::AgentLoopConfig::default();
         let agent_loop = AgentLoop::new(config);
         let router = aura_executor::ExecutorRouter::new();
-        let executor =
-            aura_agent::KernelToolExecutor::new(router, agent_id, ws_dir.join("test"));
+        let executor = aura_agent::KernelToolExecutor::new(router, agent_id, ws_dir.join("test"));
 
-        let count = process_agent(
-            agent_id,
-            store,
-            provider,
-            &agent_loop,
-            &executor,
-            &[],
-        )
-        .await
-        .unwrap();
+        let count = process_agent(agent_id, store, provider, &agent_loop, &executor, &[])
+            .await
+            .unwrap();
 
         assert_eq!(count, 0, "Empty inbox should process 0 transactions");
     }
@@ -198,8 +189,7 @@ mod tests {
         let config = aura_agent::AgentLoopConfig::default();
         let agent_loop = AgentLoop::new(config);
         let router = aura_executor::ExecutorRouter::new();
-        let executor =
-            aura_agent::KernelToolExecutor::new(router, agent_id, ws_dir.join("agent"));
+        let executor = aura_agent::KernelToolExecutor::new(router, agent_id, ws_dir.join("agent"));
 
         let count = process_agent(
             agent_id,

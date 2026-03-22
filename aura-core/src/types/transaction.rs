@@ -184,7 +184,12 @@ impl Transaction {
     /// Returns `AuraError::Serialization` if the proposal cannot be serialized.
     pub fn tool_proposal(agent_id: AgentId, proposal: &ToolProposal) -> Result<Self, AuraError> {
         let payload = serde_json::to_vec(proposal)?;
-        Ok(Self::new_chained(agent_id, TransactionType::ToolProposal, payload, None))
+        Ok(Self::new_chained(
+            agent_id,
+            TransactionType::ToolProposal,
+            payload,
+            None,
+        ))
     }
 
     /// Create a tool execution transaction.
@@ -196,7 +201,12 @@ impl Transaction {
     /// Returns `AuraError::Serialization` if the execution cannot be serialized.
     pub fn tool_execution(agent_id: AgentId, execution: &ToolExecution) -> Result<Self, AuraError> {
         let payload = serde_json::to_vec(execution)?;
-        Ok(Self::new_chained(agent_id, TransactionType::ToolExecution, payload, None))
+        Ok(Self::new_chained(
+            agent_id,
+            TransactionType::ToolExecution,
+            payload,
+            None,
+        ))
     }
 
     /// Create a process completion transaction.

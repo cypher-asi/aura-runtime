@@ -771,7 +771,10 @@ mod tests {
         let json = serde_json::to_string(&block).unwrap();
         let parsed: ContentBlock = serde_json::from_str(&json).unwrap();
         match parsed {
-            ContentBlock::Thinking { thinking, signature } => {
+            ContentBlock::Thinking {
+                thinking,
+                signature,
+            } => {
                 assert_eq!(thinking, "hmm");
                 assert_eq!(signature, Some("sig".to_string()));
             }
@@ -806,11 +809,8 @@ mod tests {
 
     #[test]
     fn test_content_block_tool_result_serialization() {
-        let block = ContentBlock::tool_result(
-            "tu_1",
-            ToolResultContent::text("file contents here"),
-            false,
-        );
+        let block =
+            ContentBlock::tool_result("tu_1", ToolResultContent::text("file contents here"), false);
         let json = serde_json::to_string(&block).unwrap();
         assert!(json.contains("tool_result"));
         assert!(json.contains("tu_1"));
@@ -825,7 +825,9 @@ mod tests {
         use request::ThinkingConfig;
 
         let request = ModelRequest::builder("model", "system")
-            .thinking(ThinkingConfig { budget_tokens: 4096 })
+            .thinking(ThinkingConfig {
+                budget_tokens: 4096,
+            })
             .build();
 
         assert!(request.thinking.is_some());

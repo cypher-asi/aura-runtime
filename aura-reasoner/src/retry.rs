@@ -204,9 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_429_retries_then_succeeds() {
-        let provider = RetryTestProvider::new(vec![
-            "429 rate limited".to_string(),
-        ]);
+        let provider = RetryTestProvider::new(vec!["429 rate limited".to_string()]);
         let request = ModelRequest::builder("test-model", "system").build();
         let config = RetryConfig {
             base_backoff: Duration::from_millis(1),
@@ -220,9 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_529_retries_then_succeeds() {
-        let provider = RetryTestProvider::new(vec![
-            "529 overloaded".to_string(),
-        ]);
+        let provider = RetryTestProvider::new(vec!["529 overloaded".to_string()]);
         let request = ModelRequest::builder("test-model", "system").build();
         let config = RetryConfig {
             base_backoff: Duration::from_millis(1),
@@ -236,9 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_400_does_not_retry() {
-        let provider = RetryTestProvider::new(vec![
-            "400 bad request".to_string(),
-        ]);
+        let provider = RetryTestProvider::new(vec!["400 bad request".to_string()]);
         let request = ModelRequest::builder("test-model", "system").build();
         let config = RetryConfig {
             base_backoff: Duration::from_millis(1),
@@ -252,9 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_500_does_not_retry() {
-        let provider = RetryTestProvider::new(vec![
-            "500 internal server error".to_string(),
-        ]);
+        let provider = RetryTestProvider::new(vec!["500 internal server error".to_string()]);
         let request = ModelRequest::builder("test-model", "system").build();
         let config = RetryConfig {
             base_backoff: Duration::from_millis(1),
@@ -309,9 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_zero_retries_still_tries_once() {
-        let provider = RetryTestProvider::new(vec![
-            "429 rate limited".to_string(),
-        ]);
+        let provider = RetryTestProvider::new(vec!["429 rate limited".to_string()]);
         let request = ModelRequest::builder("test-model", "system").build();
         let config = RetryConfig {
             max_retries_per_model: 0,

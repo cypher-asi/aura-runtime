@@ -212,8 +212,10 @@ impl Tool for FsEditTool {
             .to_string();
         let replace_all = args["replace_all"].as_bool().unwrap_or(false);
         let sandbox = ctx.sandbox.clone();
-        super::spawn_blocking_tool(move || fs_edit(&sandbox, &path, &old_text, &new_text, replace_all))
-            .await
+        super::spawn_blocking_tool(move || {
+            fs_edit(&sandbox, &path, &old_text, &new_text, replace_all)
+        })
+        .await
     }
 }
 
@@ -425,14 +427,7 @@ mod tests {
         let content = "fn foo() { bar(baz{}) }";
         fs::write(dir.path().join("parens.txt"), content).unwrap();
 
-        let result = fs_edit(
-            &sandbox,
-            "parens.txt",
-            "bar(baz{})",
-            "qux()",
-            false,
-        )
-        .unwrap();
+        let result = fs_edit(&sandbox, "parens.txt", "bar(baz{})", "qux()", false).unwrap();
         assert!(result.ok);
 
         let updated = fs::read_to_string(dir.path().join("parens.txt")).unwrap();
@@ -444,10 +439,7 @@ mod tests {
         let (sandbox, _dir) = create_test_sandbox();
 
         let result = fs_edit(&sandbox, "nope.txt", "old", "new", false);
-        assert!(matches!(
-            result,
-            Err(ToolError::PathNotFound(_))
-        ));
+        assert!(matches!(result, Err(ToolError::PathNotFound(_))));
     }
 
     #[test]

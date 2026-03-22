@@ -1,4 +1,39 @@
 //! `RocksDB` implementation of the Store trait.
+//!
+//! # Atomic Commit Protocol
+//!
+//! All mutations that involve more than one column family use [`WriteBatch`] to
+//! guarantee **all-or-nothing** semantics.  `RocksDB` applies a `WriteBatch` as a
+//! single atomic unit: either every put/delete in the batch is durably written,
+//! or none of them are.
+//!
+//! The key multi-step operation is [`Store::append_entry_atomic`], which
+//! performs four writes in one batch:
+//!
+//! 1. **Put** the serialised [`RecordEntry`] into the `record` column family.
+//! 2. **Put** the updated `head_seq` into `agent_meta`.
+//! 3. **Delete** the consumed inbox entry from the `inbox` column family.
+//! 4. **Put** the advanced `inbox_head` cursor into `agent_meta`.
+//!
+//! Because these four operations share one `WriteBatch`, it is impossible to
+//! observe a state where the record was written but the inbox was not advanced,
+//! or vice-versa.  Transaction enqueue ([`Store::enqueue_tx`]) likewise batches
+//! the inbox entry write with the tail-cursor update.
+//!
+//! # Failure Modes
+//!
+//! * **Partial writes are impossible** – the `WriteBatch` contract prevents
+//!   them at the `RocksDB` level.
+//! * **Sequence mismatch** – `append_entry_atomic` validates that `next_seq ==
+//!   current_head + 1` before writing; a mismatch returns
+//!   [`StoreError::SequenceMismatch`] without mutating state.
+//! * **Disk-level failures** (e.g. full disk, storage corruption) may leave the
+//!   WAL or SST files in an inconsistent state. `RocksDB`'s WAL replay can
+//!   recover from crashes mid-write, but hardware-level corruption (bit-rot,
+//!   torn sectors) may require restoring from backup.
+//! * **`sync_writes`** controls whether each `WriteBatch` issues an `fsync`.
+//!   When disabled, a process crash can lose committed batches that haven't
+//!   been flushed to disk yet.
 
 use crate::cf;
 use crate::error::StoreError;

@@ -68,7 +68,7 @@ pub enum AgentLoopEvent {
 
     /// An error occurred during execution.
     Error {
-        /// Machine-readable error code (e.g. "rate_limit", "timeout", "llm_error").
+        /// Machine-readable error code (e.g. `rate_limit`, `timeout`, `llm_error`).
         code: String,
         /// Human-readable description.
         message: String,

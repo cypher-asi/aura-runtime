@@ -1,6 +1,44 @@
 //! Sandbox for path validation.
 //!
-//! Ensures all paths resolve within the workspace root.
+//! Ensures all file-system paths supplied by an agent resolve within the
+//! workspace root, preventing access to the wider host file system.
+//!
+//! # How Enforcement Works
+//!
+//! Every path goes through two stages of validation:
+//!
+//! 1. **Normalisation** – the path is joined with the sandbox root (if
+//!    relative) and then [`normalize_path`] resolves all `.` and `..`
+//!    components *without* touching the file system.  The result is compared
+//!    against the canonical root via [`Path::starts_with`].
+//! 2. **Symlink re-check** – for paths that must already exist
+//!    ([`Sandbox::resolve_existing`]), the path is additionally
+//!    [`canonicalize`](std::fs::canonicalize)d, which follows symlinks to their
+//!    real target, and the prefix check is repeated.  This catches symlinks
+//!    whose target lies outside the sandbox.
+//!
+//! # Attacks Prevented
+//!
+//! * **Directory traversal** (`../../../etc/passwd`) – caught during
+//!   normalisation because `..` components that would move above the root are
+//!   collapsed and the prefix check fails.
+//! * **Symlinks / junctions to outside** – a symlink at
+//!   `<root>/escape -> /etc` is caught by the post-canonicalize prefix check
+//!   in `resolve_existing`.
+//! * **Absolute paths outside root** (`/tmp/evil`) – fail the prefix check
+//!   immediately.
+//!
+//! # Assumptions
+//!
+//! * **`workspace_root` is trusted** – the root path itself is provided by the
+//!   system, not the agent.  It is canonicalized once at construction time.
+//! * **No TOCTOU for new files** – [`Sandbox::resolve_new`] validates the
+//!   *intended* path but cannot follow symlinks for files that do not yet
+//!   exist.  A race where a symlink is created between validation and use is
+//!   outside the sandbox's scope (mitigated at the OS/container level).
+//! * **OS path semantics** – the normalisation logic relies on
+//!   [`std::path::Component`] for correct handling of platform-specific path
+//!   separators and prefixes (e.g. `\\?\` on Windows).
 
 use crate::error::ToolError;
 use std::path::{Path, PathBuf};
@@ -221,7 +259,11 @@ mod tests {
         let outside = TempDir::new().unwrap();
         std::fs::write(outside.path().join("secret.txt"), "top secret").unwrap();
 
-        symlink(outside.path().join("secret.txt"), dir.path().join("escape_link")).unwrap();
+        symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("escape_link"),
+        )
+        .unwrap();
 
         let result = sandbox.resolve_existing("escape_link");
         assert!(

@@ -428,9 +428,7 @@ mod tests {
         let ctx1 = ContextBuilder::new(&tx)
             .with_record_window(entries.clone())
             .build();
-        let ctx2 = ContextBuilder::new(&tx)
-            .with_record_window(entries)
-            .build();
+        let ctx2 = ContextBuilder::new(&tx).with_record_window(entries).build();
 
         assert_eq!(ctx1.context_hash, ctx2.context_hash);
         assert_eq!(ctx1.record_summaries.len(), ctx2.record_summaries.len());

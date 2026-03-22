@@ -481,7 +481,10 @@ mod tests {
             (AuraError::configuration("msg"), "configuration error: msg"),
             (AuraError::internal("msg"), "internal error: msg"),
             (AuraError::serialization("msg"), "serialization error: msg"),
-            (AuraError::deserialization("msg"), "deserialization error: msg"),
+            (
+                AuraError::deserialization("msg"),
+                "deserialization error: msg",
+            ),
             (AuraError::policy_violation("msg"), "policy violation: msg"),
         ];
 

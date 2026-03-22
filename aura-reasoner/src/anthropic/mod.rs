@@ -105,7 +105,7 @@ impl AnthropicProvider {
     ///
     /// Returns the raw `reqwest::Response` on success, or an [`ApiError`]
     /// that the retry loop can pattern-match on.
-    async fn send_checked<B: Serialize>(
+    async fn send_checked<B: Serialize + Sync>(
         &self,
         auth_token: Option<&str>,
         json_body: &B,
@@ -127,8 +127,7 @@ impl AnthropicProvider {
                 let token = auth_token.ok_or_else(|| {
                     ApiError::Other(anyhow::anyhow!("Proxy mode requires a JWT auth token"))
                 })?;
-                req_builder =
-                    req_builder.header("authorization", format!("Bearer {token}"));
+                req_builder = req_builder.header("authorization", format!("Bearer {token}"));
             }
         }
 
@@ -209,11 +208,10 @@ impl ModelProvider for AnthropicProvider {
                         let latency_ms =
                             u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
-                        let api_response: ApiResponse =
-                            response.json().await.map_err(|e| {
-                                error!(error = %e, "Failed to parse Anthropic response");
-                                anyhow::anyhow!("Failed to parse Anthropic response: {e}")
-                            })?;
+                        let api_response: ApiResponse = response.json().await.map_err(|e| {
+                            error!(error = %e, "Failed to parse Anthropic response");
+                            anyhow::anyhow!("Failed to parse Anthropic response: {e}")
+                        })?;
 
                         let message = convert_response_to_aura(&api_response.content);
                         let stop_reason = match api_response.stop_reason.as_deref() {
@@ -251,9 +249,7 @@ impl ModelProvider for AnthropicProvider {
                                 cache_creation_input_tokens: api_response
                                     .usage
                                     .cache_creation_input_tokens,
-                                cache_read_input_tokens: api_response
-                                    .usage
-                                    .cache_read_input_tokens,
+                                cache_read_input_tokens: api_response.usage.cache_read_input_tokens,
                             },
                             trace: ProviderTrace {
                                 request_id: Some(api_response.id),
@@ -266,19 +262,13 @@ impl ModelProvider for AnthropicProvider {
                     Err(ApiError::InsufficientCredits(msg)) => {
                         return Err(ReasonerError::InsufficientCredits(msg).into());
                     }
-                    Err(ApiError::Overloaded(ref msg))
-                        if attempt < self.config.max_retries =>
-                    {
+                    Err(ApiError::Overloaded(ref msg)) if attempt < self.config.max_retries => {
                         warn!(model = %model, attempt, "API overloaded, will retry");
-                        last_err =
-                            Some(ReasonerError::RateLimited(msg.clone()).into());
+                        last_err = Some(ReasonerError::RateLimited(msg.clone()).into());
                     }
-                    Err(ApiError::Overloaded(ref msg))
-                        if model_idx < models.len() - 1 =>
-                    {
+                    Err(ApiError::Overloaded(ref msg)) if model_idx < models.len() - 1 => {
                         warn!(model = %model, "Retries exhausted, falling back to next model");
-                        last_err =
-                            Some(ReasonerError::RateLimited(msg.clone()).into());
+                        last_err = Some(ReasonerError::RateLimited(msg.clone()).into());
                         break;
                     }
                     Err(e) => return Err(e.into()),
@@ -286,8 +276,7 @@ impl ModelProvider for AnthropicProvider {
             }
         }
 
-        Err(last_err
-            .unwrap_or_else(|| anyhow::anyhow!("All models in fallback chain exhausted")))
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("All models in fallback chain exhausted")))
     }
 
     /// TODO: Actually ping the Anthropic API (e.g. a lightweight models-list
@@ -356,19 +345,13 @@ impl ModelProvider for AnthropicProvider {
                     Err(ApiError::InsufficientCredits(msg)) => {
                         return Err(ReasonerError::InsufficientCredits(msg).into());
                     }
-                    Err(ApiError::Overloaded(ref msg))
-                        if attempt < self.config.max_retries =>
-                    {
+                    Err(ApiError::Overloaded(ref msg)) if attempt < self.config.max_retries => {
                         warn!(model = %model, attempt, "Streaming API overloaded, will retry");
-                        last_err =
-                            Some(ReasonerError::RateLimited(msg.clone()).into());
+                        last_err = Some(ReasonerError::RateLimited(msg.clone()).into());
                     }
-                    Err(ApiError::Overloaded(ref msg))
-                        if model_idx < models.len() - 1 =>
-                    {
+                    Err(ApiError::Overloaded(ref msg)) if model_idx < models.len() - 1 => {
                         warn!(model = %model, "Streaming retries exhausted, falling back");
-                        last_err =
-                            Some(ReasonerError::RateLimited(msg.clone()).into());
+                        last_err = Some(ReasonerError::RateLimited(msg.clone()).into());
                         break;
                     }
                     Err(e) => return Err(e.into()),
@@ -376,8 +359,7 @@ impl ModelProvider for AnthropicProvider {
             }
         }
 
-        Err(last_err
-            .unwrap_or_else(|| anyhow::anyhow!("All models in fallback chain exhausted")))
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("All models in fallback chain exhausted")))
     }
 }
 
@@ -555,8 +537,7 @@ mod tests {
             ApiError::InsufficientCredits("402 insufficient".into()).into();
         assert!(credits.to_string().contains("402"));
 
-        let other: anyhow::Error =
-            ApiError::Other(anyhow::anyhow!("network error")).into();
+        let other: anyhow::Error = ApiError::Other(anyhow::anyhow!("network error")).into();
         assert!(other.to_string().contains("network error"));
     }
 
@@ -564,7 +545,9 @@ mod tests {
     fn test_resolve_thinking_explicit_config() {
         let request = ModelRequest::builder("claude-opus-4-6", "system")
             .max_tokens(8192)
-            .thinking(ThinkingConfig { budget_tokens: 4000 })
+            .thinking(ThinkingConfig {
+                budget_tokens: 4000,
+            })
             .build();
         let thinking = resolve_thinking(&request, "claude-opus-4-6");
         assert!(thinking.is_some());

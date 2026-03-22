@@ -113,7 +113,9 @@ where
                                 tool_use_id: id,
                                 tool_name: name,
                                 tool_args: input,
-                                result: ToolResultContent::text(format!("Failed to create action: {e}")),
+                                result: ToolResultContent::text(format!(
+                                    "Failed to create action: {e}"
+                                )),
                                 is_error: true,
                                 metadata: HashMap::default(),
                             };

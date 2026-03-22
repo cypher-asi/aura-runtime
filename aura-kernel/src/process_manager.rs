@@ -734,8 +734,7 @@ mod tests {
             aura_core::TransactionType::ProcessComplete
         );
 
-        let payload: ActionResultPayload =
-            serde_json::from_slice(&completion.payload).unwrap();
+        let payload: ActionResultPayload = serde_json::from_slice(&completion.payload).unwrap();
         assert!(!payload.success);
     }
 }

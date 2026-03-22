@@ -53,7 +53,9 @@ impl ExternalTool {
         let client = reqwest::Client::builder()
             .timeout(DEFAULT_CALLBACK_TIMEOUT)
             .build()
-            .map_err(|e| ToolError::ExternalToolError(format!("Failed to build HTTP client: {e}")))?;
+            .map_err(|e| {
+                ToolError::ExternalToolError(format!("Failed to build HTTP client: {e}"))
+            })?;
         Ok(Self { def, client })
     }
 

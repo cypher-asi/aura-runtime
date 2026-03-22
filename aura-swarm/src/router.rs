@@ -298,10 +298,8 @@ mod tests {
         let app = create_router(state);
 
         let agent_id = AgentId::generate();
-        let payload_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            "Hello agent",
-        );
+        let payload_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "Hello agent");
 
         let body = serde_json::json!({
             "agent_id": agent_id.to_hex(),

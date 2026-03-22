@@ -201,13 +201,14 @@ impl AgentLoop {
             sanitize::validate_and_repair(&mut messages);
 
             if let Some(max_ctx) = self.config.max_context_tokens {
-                let utilization = if let Some(api_tokens) = last_input_tokens {
-                    api_tokens as f64 / max_ctx as f64
-                } else {
-                    let char_count = compaction::estimate_message_chars(&messages);
-                    let estimated_tokens = char_count / CHARS_PER_TOKEN;
-                    estimated_tokens as f64 / max_ctx as f64
-                };
+                let utilization = last_input_tokens.map_or_else(
+                    || {
+                        let char_count = compaction::estimate_message_chars(&messages);
+                        let estimated_tokens = char_count / CHARS_PER_TOKEN;
+                        estimated_tokens as f64 / max_ctx as f64
+                    },
+                    |api_tokens| api_tokens as f64 / max_ctx as f64,
+                );
 
                 if let Some(tier) = compaction::select_tier(utilization) {
                     debug!(utilization, "Compacting context");
@@ -228,7 +229,7 @@ impl AgentLoop {
                     .complete_with_streaming(
                         provider,
                         request,
-                        &event_tx,
+                        event_tx.as_ref(),
                         cancellation_token.as_ref(),
                     )
                     .await
@@ -240,7 +241,7 @@ impl AgentLoop {
                             result.insufficient_credits = true;
                             warn!("Insufficient credits (402), stopping loop");
                             emit(
-                                &event_tx,
+                                event_tx.as_ref(),
                                 AgentLoopEvent::Error {
                                     code: "insufficient_credits".to_string(),
                                     message: err_msg,
@@ -250,7 +251,7 @@ impl AgentLoop {
                             break;
                         }
                         emit(
-                            &event_tx,
+                            event_tx.as_ref(),
                             AgentLoopEvent::Error {
                                 code: "llm_error".to_string(),
                                 message: err_msg.clone(),
@@ -306,7 +307,7 @@ impl AgentLoop {
             result.iterations = iteration + 1;
 
             emit(
-                &event_tx,
+                event_tx.as_ref(),
                 AgentLoopEvent::IterationComplete {
                     iteration,
                     input_tokens: response.usage.input_tokens,
@@ -347,9 +348,8 @@ impl AgentLoop {
                             (
                                 id.clone(),
                                 ToolResultContent::text(format!(
-                                    "Error: Response was truncated (max_tokens). Tool '{}' was not executed. \
-                                     Please try again with a simpler approach or break the task into smaller steps.",
-                                    name
+                                    "Error: Response was truncated (max_tokens). Tool '{name}' was not executed. \
+                                     Please try again with a simpler approach or break the task into smaller steps."
                                 )),
                                 true,
                             )
@@ -455,7 +455,7 @@ impl AgentLoop {
                             .find(|t| t.id == r.tool_use_id)
                             .map_or_else(String::new, |t| t.name.clone());
                         emit(
-                            &event_tx,
+                            event_tx.as_ref(),
                             AgentLoopEvent::ToolResult {
                                 tool_use_id: r.tool_use_id.clone(),
                                 tool_name,
@@ -495,7 +495,7 @@ impl AgentLoop {
                                    infinite loop. Try a different approach or ask for help.";
                         helpers::push_or_replace_warning(&mut messages, msg);
                         emit(
-                            &event_tx,
+                            event_tx.as_ref(),
                             AgentLoopEvent::Error {
                                 code: "stall_detected".to_string(),
                                 message: msg.to_string(),
@@ -512,7 +512,7 @@ impl AgentLoop {
                 checkpoint_emitted = true;
                 let checkpoint_msg = "NOTE: You've made your first file change. Before making more changes, consider verifying your work (e.g., run the build or tests) to catch issues early.".to_string();
                 helpers::push_or_replace_warning(&mut messages, &checkpoint_msg);
-                emit(&event_tx, AgentLoopEvent::Warning(checkpoint_msg));
+                emit(event_tx.as_ref(), AgentLoopEvent::Warning(checkpoint_msg));
             }
 
             // Exploration-triggered proactive compaction
@@ -536,7 +536,7 @@ impl AgentLoop {
                 budget::check_budget_warning(&mut budget_state, utilization, had_any_write)
             {
                 helpers::push_or_replace_warning(&mut messages, &warning);
-                emit(&event_tx, AgentLoopEvent::Warning(warning));
+                emit(event_tx.as_ref(), AgentLoopEvent::Warning(warning));
             }
 
             if let Some(warning) = budget::check_exploration_warning(
@@ -544,7 +544,7 @@ impl AgentLoop {
                 self.config.exploration_allowance,
             ) {
                 helpers::push_or_replace_warning(&mut messages, &warning);
-                emit(&event_tx, AgentLoopEvent::Warning(warning));
+                emit(event_tx.as_ref(), AgentLoopEvent::Warning(warning));
             }
 
             let total_tokens = result.total_input_tokens + result.total_output_tokens;
@@ -575,7 +575,7 @@ impl AgentLoop {
         &self,
         provider: &dyn ModelProvider,
         request: ModelRequest,
-        event_tx: &Option<UnboundedSender<AgentLoopEvent>>,
+        event_tx: Option<&UnboundedSender<AgentLoopEvent>>,
         cancellation_token: Option<&CancellationToken>,
     ) -> anyhow::Result<ModelResponse> {
         let start = Instant::now();
@@ -587,7 +587,7 @@ impl AgentLoop {
                 loop {
                     let next = if let Some(token) = cancellation_token {
                         tokio::select! {
-                            _ = token.cancelled() => {
+                            () = token.cancelled() => {
                                 return Err(anyhow::anyhow!("Cancelled"));
                             }
                             item = stream.next() => item,
@@ -754,7 +754,7 @@ impl AgentLoop {
 // ============================================================================
 
 /// Send an event through the channel if present.
-fn emit(tx: &Option<UnboundedSender<AgentLoopEvent>>, event: AgentLoopEvent) {
+fn emit(tx: Option<&UnboundedSender<AgentLoopEvent>>, event: AgentLoopEvent) {
     if let Some(tx) = tx {
         let _ = tx.send(event);
     }
@@ -762,7 +762,7 @@ fn emit(tx: &Option<UnboundedSender<AgentLoopEvent>>, event: AgentLoopEvent) {
 
 /// Map a [`StreamEvent`] to the corresponding [`AgentLoopEvent`] and emit it.
 fn emit_stream_event(
-    event_tx: &Option<UnboundedSender<AgentLoopEvent>>,
+    event_tx: Option<&UnboundedSender<AgentLoopEvent>>,
     stream_event: &StreamEvent,
     accumulator: &StreamAccumulator,
 ) {
@@ -1291,14 +1291,13 @@ mod tests {
 
         let has_truncation = result.messages.iter().any(|msg| {
             msg.content.iter().any(|block| {
-                if let ContentBlock::ToolResult { content, .. } = block {
-                    match content {
-                        ToolResultContent::Text(t) => t.contains("content truncated"),
-                        _ => false,
-                    }
-                } else {
-                    false
-                }
+                matches!(
+                    block,
+                    ContentBlock::ToolResult {
+                        content: ToolResultContent::Text(t),
+                        ..
+                    } if t.contains("content truncated")
+                )
             })
         });
         assert!(
@@ -1474,14 +1473,13 @@ mod tests {
 
         let has_truncation = result.messages.iter().any(|msg| {
             msg.content.iter().any(|block| {
-                if let ContentBlock::ToolResult { content, .. } = block {
-                    match content {
-                        ToolResultContent::Text(t) => t.contains("content truncated"),
-                        _ => false,
-                    }
-                } else {
-                    false
-                }
+                matches!(
+                    block,
+                    ContentBlock::ToolResult {
+                        content: ToolResultContent::Text(t),
+                        ..
+                    } if t.contains("content truncated")
+                )
             })
         });
         assert!(

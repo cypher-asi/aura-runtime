@@ -45,9 +45,11 @@ impl AnthropicConfig {
             RoutingMode::Direct => {
                 let key = std::env::var("AURA_ANTHROPIC_API_KEY")
                     .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-                    .map_err(|_| anyhow::anyhow!(
-                        "Direct mode requires AURA_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY"
-                    ))?;
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "Direct mode requires AURA_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY"
+                        )
+                    })?;
                 let url = std::env::var("AURA_ANTHROPIC_BASE_URL")
                     .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
                 (key, url)

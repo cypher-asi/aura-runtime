@@ -193,11 +193,13 @@ fn handle_session_init(
     session.tool_definitions = builtin_tools.list();
 
     for ext in &session.external_tools {
-        session.tool_definitions.push(aura_reasoner::ToolDefinition::new(
-            &ext.name,
-            &ext.description,
-            ext.input_schema.clone(),
-        ));
+        session
+            .tool_definitions
+            .push(aura_reasoner::ToolDefinition::new(
+                &ext.name,
+                &ext.description,
+                ext.input_schema.clone(),
+            ));
     }
 
     let tools: Vec<ToolInfo> = session

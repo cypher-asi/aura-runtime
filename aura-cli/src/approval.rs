@@ -250,9 +250,6 @@ mod tests {
     fn test_approval_decision_equality() {
         assert_eq!(ApprovalDecision::Approve, ApprovalDecision::Approve);
         assert_ne!(ApprovalDecision::Approve, ApprovalDecision::Deny);
-        assert_ne!(
-            ApprovalDecision::ApproveSession,
-            ApprovalDecision::Approve
-        );
+        assert_ne!(ApprovalDecision::ApproveSession, ApprovalDecision::Approve);
     }
 }

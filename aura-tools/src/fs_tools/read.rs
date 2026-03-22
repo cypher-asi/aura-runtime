@@ -131,7 +131,10 @@ impl Tool for FsReadTool {
             .as_u64()
             .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
         let sandbox = ctx.sandbox.clone();
-        super::spawn_blocking_tool(move || fs_read(&sandbox, &path, max_bytes, start_line, end_line)).await
+        super::spawn_blocking_tool(move || {
+            fs_read(&sandbox, &path, max_bytes, start_line, end_line)
+        })
+        .await
     }
 }
 

@@ -449,7 +449,10 @@ mod tests {
         assert_eq!(json["usage"]["model"], "claude-opus-4-6-20250514");
         assert_eq!(json["files_changed"]["created"][0], "new.txt");
         assert_eq!(json["files_changed"]["modified"][0], "old.txt");
-        assert!(json["files_changed"]["deleted"].as_array().unwrap().is_empty());
+        assert!(json["files_changed"]["deleted"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

@@ -47,7 +47,10 @@ impl DefaultToolRegistry {
             let def = tool.definition();
             tools.insert(def.name.clone(), def);
         }
-        debug!(tool_count = tools.len(), "Initialized default tool registry");
+        debug!(
+            tool_count = tools.len(),
+            "Initialized default tool registry"
+        );
         Self { tools }
     }
 
@@ -60,7 +63,10 @@ impl DefaultToolRegistry {
             let def = tool.definition();
             tools.insert(def.name.clone(), def);
         }
-        debug!(tool_count = tools.len(), "Initialized read-only tool registry");
+        debug!(
+            tool_count = tools.len(),
+            "Initialized read-only tool registry"
+        );
         Self { tools }
     }
 
