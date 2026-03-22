@@ -44,6 +44,7 @@ members = [
     "aura-terminal",
     "aura-cli",
     "aura-agent",
+    "aura-auth",
 ]
 
 [workspace.package]

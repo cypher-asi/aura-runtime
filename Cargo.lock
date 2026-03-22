@@ -161,6 +161,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aura-auth"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "aura-cli"
 version = "0.1.0"
 dependencies = [
