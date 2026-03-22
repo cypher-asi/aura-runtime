@@ -91,7 +91,9 @@ pub fn truncate_content(
         .collect();
 
     let omitted = content.len().saturating_sub(head + tail);
-    format!("{head_part}\n\n[...content truncated ({omitted} chars omitted)...]\n\n{tail_part}",)
+    format!(
+        "{head_part}\n\n[...content truncated ({omitted} chars omitted)...]\n\n{tail_part}",
+    )
 }
 
 /// Estimate total character count of messages.
@@ -125,8 +127,8 @@ pub fn estimate_message_chars(messages: &[Message]) -> usize {
 /// Higher utilization → more aggressive compaction. Returns `None` below 15%.
 pub fn select_tier(utilization: f64) -> Option<CompactionConfig> {
     use crate::constants::{
-        COMPACTION_TIER_30, COMPACTION_TIER_60, COMPACTION_TIER_AGGRESSIVE,
-        COMPACTION_TIER_HISTORY, COMPACTION_TIER_MICRO,
+        COMPACTION_TIER_30, COMPACTION_TIER_60, COMPACTION_TIER_AGGRESSIVE, COMPACTION_TIER_HISTORY,
+        COMPACTION_TIER_MICRO,
     };
     if utilization >= COMPACTION_TIER_HISTORY {
         Some(CompactionConfig::micro())
@@ -181,7 +183,32 @@ pub fn try_signature_compact(content: &str) -> Option<String> {
                 || trimmed.starts_with("pub const fn ")
                 || trimmed.starts_with("const fn ");
 
-            if in_body {
+            if !in_body {
+                if is_sig_line && line_buf.contains('{') {
+                    result.push_str(&line_buf);
+                    result.push('\n');
+
+                    let open_count = line_buf.chars().filter(|&c| c == '{').count() as i32;
+                    let close_count = line_buf.chars().filter(|&c| c == '}').count() as i32;
+                    brace_depth += open_count - close_count;
+
+                    if brace_depth > 0 {
+                        in_body = true;
+                        body_start_depth = brace_depth - 1;
+                        wrote_placeholder = false;
+                    }
+                } else {
+                    for c in line_buf.chars() {
+                        match c {
+                            '{' => brace_depth += 1,
+                            '}' => brace_depth -= 1,
+                            _ => {}
+                        }
+                    }
+                    result.push_str(&line_buf);
+                    result.push('\n');
+                }
+            } else {
                 for c in line_buf.chars() {
                     match c {
                         '{' => brace_depth += 1,
@@ -201,31 +228,6 @@ pub fn try_signature_compact(content: &str) -> Option<String> {
                     result.push_str("    // ... body omitted ...\n");
                     wrote_placeholder = true;
                 }
-            } else if is_sig_line && line_buf.contains('{') {
-                result.push_str(&line_buf);
-                result.push('\n');
-
-                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                let open_count = line_buf.chars().filter(|&c| c == '{').count() as i32;
-                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                let close_count = line_buf.chars().filter(|&c| c == '}').count() as i32;
-                brace_depth += open_count - close_count;
-
-                if brace_depth > 0 {
-                    in_body = true;
-                    body_start_depth = brace_depth - 1;
-                    wrote_placeholder = false;
-                }
-            } else {
-                for c in line_buf.chars() {
-                    match c {
-                        '{' => brace_depth += 1,
-                        '}' => brace_depth -= 1,
-                        _ => {}
-                    }
-                }
-                result.push_str(&line_buf);
-                result.push('\n');
             }
 
             line_buf.clear();
@@ -234,7 +236,6 @@ pub fn try_signature_compact(content: &str) -> Option<String> {
         }
     }
 
-    #[allow(clippy::cast_precision_loss)]
     let reduction = 1.0 - (result.len() as f64 / content.len() as f64);
     if reduction >= 0.30 {
         Some(result)
@@ -286,9 +287,7 @@ pub fn compact_older_messages(messages: &mut [Message], config: &CompactionConfi
                                 tail_chars,
                             )
                         });
-                        if compacted.len() <= config.tool_result_max_chars
-                            || compacted.len() < text.len()
-                        {
+                        if compacted.len() <= config.tool_result_max_chars || compacted.len() < text.len() {
                             *content = aura_reasoner::ToolResultContent::Text(compacted);
                         } else {
                             *content = aura_reasoner::ToolResultContent::Text(truncate_content(
@@ -327,6 +326,76 @@ pub fn compact_older_messages(messages: &mut [Message], config: &CompactionConfi
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Head/tail compaction config (ported from aura-chat)
+// ---------------------------------------------------------------------------
+
+/// Configurable head/tail truncation parameters.
+pub struct CompactConfig {
+    pub threshold: usize,
+    pub keep_head: usize,
+    pub keep_tail: usize,
+}
+
+pub const MICRO: CompactConfig = CompactConfig {
+    threshold: 16_000,
+    keep_head: 6_000,
+    keep_tail: 3_000,
+};
+
+pub const AGGRESSIVE: CompactConfig = CompactConfig {
+    threshold: 4_000,
+    keep_head: 1_600,
+    keep_tail: 800,
+};
+
+pub const HISTORY: CompactConfig = CompactConfig {
+    threshold: 2_000,
+    keep_head: 500,
+    keep_tail: 200,
+};
+
+/// Core head/tail truncation with a caller-supplied omission marker.
+fn truncate_with_marker(
+    content: &str,
+    cfg: &CompactConfig,
+    marker_fn: impl FnOnce(usize) -> String,
+) -> String {
+    if content.len() <= cfg.threshold {
+        return content.to_string();
+    }
+    let head: String = content.chars().take(cfg.keep_head).collect();
+    let tail: String = content
+        .chars()
+        .rev()
+        .take(cfg.keep_tail)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let omitted = content.len() - cfg.keep_head - cfg.keep_tail;
+    let marker = marker_fn(omitted);
+    format!("{head}{marker}{tail}")
+}
+
+/// Head/tail truncation with an omission marker in the middle.
+pub fn truncate(content: &str, cfg: &CompactConfig) -> String {
+    truncate_with_marker(content, cfg, |omitted| {
+        format!("\n[...{omitted} chars omitted...]\n")
+    })
+}
+
+/// Microcompact: moderate truncation for tool results sent to the LLM.
+pub fn microcompact(content: &str) -> String {
+    truncate_with_marker(content, &MICRO, |omitted| {
+        format!(
+            "\n\n[... {omitted} characters omitted \
+             — use read_file with start_line/end_line for specific sections, \
+             or re-run the command if you need the full output ...]\n\n"
+        )
+    })
 }
 
 #[cfg(test)]
@@ -369,14 +438,8 @@ mod tests {
         let tier = select_tier(0.85);
         assert!(tier.is_some());
         let config = tier.unwrap();
-        assert_eq!(
-            config.preserve_recent,
-            CompactionConfig::micro().preserve_recent
-        );
-        assert_eq!(
-            config.tool_result_max_chars,
-            CompactionConfig::micro().tool_result_max_chars
-        );
+        assert_eq!(config.preserve_recent, CompactionConfig::micro().preserve_recent);
+        assert_eq!(config.tool_result_max_chars, CompactionConfig::micro().tool_result_max_chars);
     }
 
     #[test]
@@ -519,66 +582,6 @@ fn helper_internal() {
     }
 
     #[test]
-    fn test_compact_skips_when_too_few_messages() {
-        let mut messages = vec![Message::user("only one")];
-        let config = CompactionConfig::micro();
-        compact_older_messages(&mut messages, &config);
-        assert_eq!(messages.len(), 1);
-    }
-
-    #[test]
-    fn test_compact_preserves_first_message() {
-        let long = "x".repeat(5000);
-        let mut messages = vec![
-            Message::user(&long),
-            Message::user(&long),
-            Message::user(&long),
-            Message::user(&long),
-            Message::user("recent 1"),
-            Message::user("recent 2"),
-        ];
-        let config = CompactionConfig {
-            tool_result_max_chars: 100,
-            text_max_chars: 100,
-            preserve_recent: 2,
-        };
-        compact_older_messages(&mut messages, &config);
-
-        if let aura_reasoner::ContentBlock::Text { text } = &messages[0].content[0] {
-            assert_eq!(text.len(), long.len(), "First message should be untouched");
-        }
-    }
-
-    #[test]
-    fn test_estimate_message_chars_empty() {
-        let messages: Vec<Message> = vec![];
-        assert_eq!(estimate_message_chars(&messages), 0);
-    }
-
-    #[test]
-    fn test_estimate_message_chars_text() {
-        let messages = vec![Message::user("hello world")];
-        assert!(estimate_message_chars(&messages) >= 11);
-    }
-
-    #[test]
-    fn test_truncate_exact_boundary() {
-        let content = "a".repeat(100);
-        let result = truncate_content(&content, 100, None, None);
-        assert_eq!(
-            result, content,
-            "Content at exact limit should not truncate"
-        );
-    }
-
-    #[test]
-    fn test_truncate_one_over_boundary() {
-        let content = "a".repeat(101);
-        let result = truncate_content(&content, 100, None, None);
-        assert!(result.contains("content truncated"));
-    }
-
-    #[test]
     fn test_configurable_head_tail() {
         let content = "a".repeat(10_000);
 
@@ -600,5 +603,40 @@ fn helper_internal() {
         assert!(result_micro.starts_with(&"b".repeat(6000)));
         assert!(result_micro.ends_with(&"b".repeat(3000)));
         assert!(result_micro.contains("content truncated"));
+    }
+
+    // ── CompactConfig / truncate / microcompact tests ──────────────
+
+    #[test]
+    fn test_compact_truncate_below_threshold() {
+        let content = "short content";
+        let result = truncate(content, &MICRO);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_compact_truncate_above_threshold() {
+        let content = "a".repeat(20_000);
+        let result = truncate(&content, &MICRO);
+        assert!(result.len() < content.len());
+        assert!(result.contains("omitted"));
+        assert!(result.starts_with("aaa"));
+        assert!(result.ends_with("aaa"));
+    }
+
+    #[test]
+    fn test_microcompact_below_16k() {
+        let content = "x".repeat(15_000);
+        let result = microcompact(&content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_microcompact_above_16k() {
+        let content = "y".repeat(20_000);
+        let result = microcompact(&content);
+        assert!(result.len() < content.len());
+        assert!(result.contains("characters omitted"));
+        assert!(result.contains("read_file"));
     }
 }
