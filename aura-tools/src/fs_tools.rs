@@ -999,6 +999,7 @@ impl Tool for FsLsTool {
                 },
                 "required": ["path"]
             }),
+            cache_control: None,
         }
     }
 
@@ -1048,6 +1049,7 @@ impl Tool for FsReadTool {
                 },
                 "required": ["path"]
             }),
+            cache_control: None,
         }
     }
 
@@ -1101,6 +1103,7 @@ impl Tool for FsStatTool {
                 },
                 "required": ["path"]
             }),
+            cache_control: None,
         }
     }
 
@@ -1151,6 +1154,7 @@ impl Tool for FsWriteTool {
                 },
                 "required": ["path", "content"]
             }),
+            cache_control: None,
         }
     }
 
@@ -1208,6 +1212,7 @@ impl Tool for FsEditTool {
                 },
                 "required": ["path", "old_text", "new_text"]
             }),
+            cache_control: None,
         }
     }
 
@@ -1278,6 +1283,7 @@ impl Tool for SearchCodeTool {
                 },
                 "required": ["pattern"]
             }),
+            cache_control: None,
         }
     }
 
@@ -1341,6 +1347,7 @@ impl Tool for FsDeleteTool {
                 },
                 "required": ["path"]
             }),
+            cache_control: None,
         }
     }
 
@@ -1385,6 +1392,7 @@ impl Tool for FsFindTool {
                 },
                 "required": ["pattern"]
             }),
+            cache_control: None,
         }
     }
 
@@ -1474,6 +1482,7 @@ impl Tool for CmdRunTool {
                     }
                 }
             }),
+            cache_control: None,
         }
     }
 

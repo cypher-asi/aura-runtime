@@ -807,19 +807,27 @@ fn convert_messages_to_api(messages: &[Message]) -> Vec<ApiMessage> {
 }
 
 fn convert_tools_to_api(tools: &[ToolDefinition]) -> Vec<ApiTool> {
+    let has_any_cache_control = tools.iter().any(|t| t.cache_control.is_some());
+
     let mut api_tools: Vec<ApiTool> = tools
         .iter()
         .map(|tool| ApiTool {
             name: tool.name.clone(),
             description: tool.description.clone(),
             input_schema: tool.input_schema.clone(),
-            cache_control: None,
+            cache_control: tool
+                .cache_control
+                .as_ref()
+                .map(|cc| serde_json::json!({"type": cc.cache_type})),
         })
         .collect();
 
-    // Add cache_control to the last tool definition
-    if let Some(last_tool) = api_tools.last_mut() {
-        last_tool.cache_control = Some(serde_json::json!({"type": "ephemeral"}));
+    // When no tool carries an explicit directive, mark the last tool ephemeral
+    // so the full tool-definition block is cached by default.
+    if !has_any_cache_control {
+        if let Some(last_tool) = api_tools.last_mut() {
+            last_tool.cache_control = Some(serde_json::json!({"type": "ephemeral"}));
+        }
     }
 
     api_tools

@@ -73,6 +73,7 @@ impl Tool for ExternalTool {
             name: self.def.name.clone(),
             description: self.def.description.clone(),
             input_schema: self.def.input_schema.clone(),
+            cache_control: None,
         }
     }
 
