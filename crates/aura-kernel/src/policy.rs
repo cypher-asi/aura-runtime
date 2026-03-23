@@ -122,6 +122,21 @@ impl PolicyConfig {
         self.tool_permissions.insert(tool.to_string(), level);
         self
     }
+
+    /// Add a single tool to the allowed set with `AlwaysAllow` permission.
+    pub fn add_allowed_tool(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        self.allowed_tools.insert(name.clone());
+        self.tool_permissions
+            .insert(name, PermissionLevel::AlwaysAllow);
+    }
+
+    /// Add multiple tools to the allowed set with `AlwaysAllow` permission.
+    pub fn add_allowed_tools(&mut self, names: impl IntoIterator<Item = impl Into<String>>) {
+        for name in names {
+            self.add_allowed_tool(name);
+        }
+    }
 }
 
 // ============================================================================
@@ -329,6 +344,11 @@ impl Policy {
     #[must_use]
     pub const fn max_proposals(&self) -> usize {
         self.config.max_proposals
+    }
+
+    /// Add installed tool names to the policy's allowed set with `AlwaysAllow`.
+    pub fn add_allowed_tools(&mut self, names: impl IntoIterator<Item = impl Into<String>>) {
+        self.config.add_allowed_tools(names);
     }
 }
 
@@ -589,5 +609,51 @@ mod tests {
         let result = policy.check(&proposal);
         assert!(!result.allowed);
         assert!(result.reason.unwrap().contains("not allowed"));
+    }
+
+    #[test]
+    fn test_add_allowed_tool() {
+        let mut config = PolicyConfig::default();
+        config.add_allowed_tool("custom_tool");
+
+        let policy = Policy::new(config);
+        assert_eq!(
+            policy.check_tool_permission("custom_tool"),
+            PermissionLevel::AlwaysAllow
+        );
+        assert!(!policy.requires_approval("custom_tool"));
+    }
+
+    #[test]
+    fn test_add_allowed_tools_batch() {
+        let mut config = PolicyConfig::default();
+        config.add_allowed_tools(vec!["tool_a", "tool_b", "tool_c"]);
+
+        let policy = Policy::new(config);
+        assert_eq!(
+            policy.check_tool_permission("tool_a"),
+            PermissionLevel::AlwaysAllow
+        );
+        assert_eq!(
+            policy.check_tool_permission("tool_b"),
+            PermissionLevel::AlwaysAllow
+        );
+        assert_eq!(
+            policy.check_tool_permission("tool_c"),
+            PermissionLevel::AlwaysAllow
+        );
+    }
+
+    #[test]
+    fn test_policy_add_allowed_tools() {
+        let mut policy = Policy::with_defaults();
+        assert!(policy.requires_approval("custom_installed_tool"));
+
+        policy.add_allowed_tools(vec!["custom_installed_tool"]);
+        assert!(!policy.requires_approval("custom_installed_tool"));
+        assert_eq!(
+            policy.check_tool_permission("custom_installed_tool"),
+            PermissionLevel::AlwaysAllow
+        );
     }
 }
