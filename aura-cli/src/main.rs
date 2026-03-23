@@ -7,8 +7,9 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 
-// Approval types are tested via unit tests and will be integrated into the
-// interactive approval flow once the approval UI is implemented.
+// TODO(wiring): approval.rs is fully implemented and tested, but not yet
+// integrated into the interactive session loop. Wire into handle_approve/handle_deny
+// once the session supports pending tool requests.
 #[allow(dead_code)]
 mod approval;
 mod session;
@@ -227,6 +228,8 @@ fn handle_status(session: &Session) {
     println!();
 }
 
+/// TODO: Implement - currently prints placeholder message.
+///
 /// Display the last `n` conversation history entries.
 fn handle_history(_session: &Session, _n: usize) {
     println!("{} History display not yet implemented", "ℹ".blue().bold());
@@ -253,6 +256,8 @@ fn handle_deny(session: &Session) {
     println!();
 }
 
+/// TODO: Implement - currently prints placeholder message.
+///
 /// Display pending file-level changes (not yet implemented).
 fn handle_diff(_session: &Session) {
     println!("{} Diff display not yet implemented", "ℹ".blue().bold());

@@ -22,6 +22,7 @@ pub enum StoreError {
     Deserialization(String),
 
     /// No metadata exists for the requested agent.
+    #[deprecated(note = "reserved for future use — not currently produced by RocksStore")]
     #[error("agent not found: {0}")]
     AgentNotFound(AgentId),
 
@@ -30,10 +31,12 @@ pub enum StoreError {
     RecordEntryNotFound(AgentId, u64),
 
     /// The requested transaction hash was not found in the store.
+    #[deprecated(note = "reserved for future use — not currently produced by RocksStore")]
     #[error("transaction not found: {0}")]
     TransactionNotFound(TxId),
 
     /// The agent's inbox contains no pending transactions.
+    #[deprecated(note = "reserved for future use — not currently produced by RocksStore")]
     #[error("inbox empty for agent: {0}")]
     InboxEmpty(AgentId),
 
@@ -57,6 +60,7 @@ impl From<serde_json::Error> for StoreError {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

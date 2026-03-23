@@ -62,6 +62,7 @@ pub enum MetaField {
     /// Agent status
     Status = 3,
     /// Schema version
+    #[deprecated(note = "reserved for future use")]
     SchemaVersion = 4,
 }
 
@@ -74,6 +75,7 @@ impl MetaField {
 
     /// Try to parse from byte.
     #[must_use]
+    #[allow(deprecated)]
     pub const fn from_byte(b: u8) -> Option<Self> {
         match b {
             0 => Some(Self::HeadSeq),
@@ -300,6 +302,7 @@ impl KeyCodec for InboxKey {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use proptest::prelude::*;

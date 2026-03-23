@@ -209,6 +209,8 @@ impl Session {
         self.agent_loop.set_auth_token(token);
     }
 
+    /// TODO: Implement real approve path; currently always bails with "No pending approval requests".
+    ///
     /// Approve the pending tool request.
     ///
     /// # Errors
@@ -219,6 +221,8 @@ impl Session {
         anyhow::bail!("No pending approval requests")
     }
 
+    /// TODO: Implement real deny path; currently always bails with "No pending approval requests".
+    ///
     /// Deny the pending tool request.
     ///
     /// # Errors

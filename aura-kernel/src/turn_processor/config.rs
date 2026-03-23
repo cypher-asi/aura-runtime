@@ -9,9 +9,9 @@ pub struct TurnConfig {
     pub max_steps: u32,
     /// Maximum tool calls per step
     pub max_tool_calls_per_step: u32,
-    /// Model timeout in milliseconds
+    /// Model timeout in milliseconds. NOTE: not yet enforced; reserved for future timeout logic.
     pub model_timeout_ms: u64,
-    /// Tool execution timeout in milliseconds
+    /// Tool execution timeout in milliseconds. NOTE: not yet enforced; reserved for future timeout logic.
     pub tool_timeout_ms: u64,
     /// Context window size (record entries)
     pub context_window: usize,
@@ -62,11 +62,11 @@ impl Default for TurnConfig {
 /// basis — for example, tapering the thinking budget after early iterations.
 #[derive(Debug, Clone, Default)]
 pub struct StepConfig {
-    /// Override the thinking budget for this step.
+    /// Override the thinking budget for this step. NOTE: not yet enforced by the turn processor.
     pub thinking_budget: Option<u32>,
     /// Override the model for this step.
     pub model_override: Option<String>,
-    /// Override the maximum tool calls for this step.
+    /// Override the maximum tool calls for this step. NOTE: not yet enforced by the turn processor.
     pub max_tool_calls: Option<u32>,
 }
 

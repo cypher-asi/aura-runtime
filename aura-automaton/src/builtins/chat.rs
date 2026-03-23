@@ -20,8 +20,6 @@ use crate::events::AutomatonEvent;
 use crate::runtime::{Automaton, TickOutcome};
 use crate::schedule::Schedule;
 
-const STATE_MESSAGES: &str = "messages";
-
 pub struct ChatAutomaton {
     domain: Arc<dyn DomainApi>,
     provider: Arc<dyn ModelProvider>,
