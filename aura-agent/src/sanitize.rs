@@ -1,14 +1,16 @@
 //! Message sanitization — repairs message history for API validity.
 //!
-//! Runs 5 passes:
+//! Runs 6 passes:
 //! 1. Remove empty messages
 //! 2. Merge consecutive same-role messages
 //! 3. Fix orphan tool results (`tool_result` without matching `tool_use`)
 //! 4. Fix unpaired tool uses (`tool_use` without matching `tool_result`)
 //! 5. Ensure conversation starts with a user message
+//! 6. Assert positional tool_use/tool_result constraint (debug guard)
 
 use aura_reasoner::{ContentBlock, Message, Role, ToolResultContent};
 use std::collections::HashSet;
+use tracing::warn;
 
 /// Run all sanitization passes on the message history.
 pub fn validate_and_repair(messages: &mut Vec<Message>) {
@@ -17,6 +19,7 @@ pub fn validate_and_repair(messages: &mut Vec<Message>) {
     fix_orphan_tool_results(messages);
     fix_unpaired_tool_uses(messages);
     ensure_starts_with_user(messages);
+    debug_assert_tool_pairing(messages);
 }
 
 /// Pass 1: Remove messages with no content blocks or only empty text.
@@ -159,6 +162,61 @@ fn fix_unpaired_tool_uses(messages: &mut Vec<Message>) {
 fn ensure_starts_with_user(messages: &mut Vec<Message>) {
     if messages.is_empty() || messages[0].role != Role::User {
         messages.insert(0, Message::user("[System: conversation context]"));
+    }
+}
+
+/// Pass 6 (guard): Verify that every assistant message containing `tool_use`
+/// is immediately followed by a user message containing matching `tool_result`
+/// blocks.  Logs a warning on any violation so it surfaces in traces rather
+/// than silently hitting the Anthropic 400 error.
+fn debug_assert_tool_pairing(messages: &[Message]) {
+    for (i, msg) in messages.iter().enumerate() {
+        if msg.role != Role::Assistant {
+            continue;
+        }
+
+        let tool_use_ids: Vec<&str> = msg
+            .content
+            .iter()
+            .filter_map(|b| {
+                if let ContentBlock::ToolUse { id, .. } = b {
+                    Some(id.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if tool_use_ids.is_empty() {
+            continue;
+        }
+
+        let next_result_ids: HashSet<&str> = messages
+            .get(i + 1)
+            .filter(|m| m.role == Role::User)
+            .map(|m| {
+                m.content
+                    .iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                            Some(tool_use_id.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for id in &tool_use_ids {
+            if !next_result_ids.contains(id) {
+                warn!(
+                    message_index = i,
+                    tool_use_id = id,
+                    "Sanitization guard: tool_use without matching tool_result in next message"
+                );
+            }
+        }
     }
 }
 
