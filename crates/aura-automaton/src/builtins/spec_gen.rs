@@ -146,7 +146,7 @@ impl Automaton for SpecGenAutomaton {
             .config
             .get("model")
             .and_then(|v| v.as_str())
-            .unwrap_or("claude-opus-4-6-20250514")
+            .unwrap_or(aura_core::DEFAULT_MODEL)
             .to_string();
 
         let request = aura_reasoner::ModelRequest::builder(&model, SPEC_GENERATION_SYSTEM_PROMPT)

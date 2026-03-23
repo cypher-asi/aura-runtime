@@ -54,7 +54,7 @@ impl DevLoopConfig {
         let model = config
             .get("model")
             .and_then(|v| v.as_str())
-            .unwrap_or("claude-opus-4-6-20250514")
+            .unwrap_or(aura_core::DEFAULT_MODEL)
             .to_string();
         Ok(Self {
             project_id,

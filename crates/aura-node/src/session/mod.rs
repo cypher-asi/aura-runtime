@@ -65,7 +65,7 @@ impl Session {
             session_id: Uuid::new_v4().to_string(),
             agent_id: AgentId::generate(),
             system_prompt: String::new(),
-            model: "claude-opus-4-6".to_string(),
+            model: aura_core::DEFAULT_MODEL.to_string(),
             max_tokens: 16384,
             temperature: None,
             max_turns: 25,

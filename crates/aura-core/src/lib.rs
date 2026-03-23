@@ -40,6 +40,16 @@ pub const CACHEABLE_TOOLS: &[&str] = &[
     "search_code",
 ];
 
+// ---------------------------------------------------------------------------
+// Default model identifiers
+// ---------------------------------------------------------------------------
+
+/// Default frontier model for agent loops and sessions.
+pub const DEFAULT_MODEL: &str = "claude-opus-4-6";
+
+/// Fallback model used when the primary model is unavailable.
+pub const FALLBACK_MODEL: &str = "claude-sonnet-4-6";
+
 /// Deterministic cache key from tool name and JSON arguments (canonical serialization).
 #[must_use]
 pub fn tool_result_cache_key(tool_name: &str, input: &serde_json::Value) -> String {

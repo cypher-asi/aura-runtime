@@ -89,7 +89,7 @@ impl Default for AgentLoopConfig {
             thinking_min_budget: THINKING_MIN_BUDGET,
             extra_tools: Vec::new(),
             system_prompt: String::new(),
-            model: "claude-opus-4-6-20250514".to_string(),
+            model: aura_core::DEFAULT_MODEL.to_string(),
             auth_token: None,
         }
     }
