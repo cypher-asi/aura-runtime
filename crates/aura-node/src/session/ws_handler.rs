@@ -261,7 +261,7 @@ fn start_turn(
 
     let mut tool_executor = ToolExecutor::new(ctx.tool_config.clone());
     for tool in &session.installed_tools {
-        if let Err(e) = tool_executor.register_external(tool.clone()) {
+        if let Err(e) = tool_executor.register_installed(tool.clone()) {
             tracing::warn!(tool = %tool.name, error = %e, "Failed to register installed tool");
         }
     }

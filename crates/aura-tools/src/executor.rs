@@ -1,7 +1,7 @@
 //! Tool executor implementation.
 
 use crate::error::ToolError;
-use crate::external::ExternalTool;
+use crate::installed::InstalledTool;
 use crate::sandbox::Sandbox;
 use crate::tool::{builtin_tools, Tool, ToolContext};
 use crate::ToolConfig;
@@ -48,8 +48,8 @@ impl ToolExecutor {
     ///
     /// # Errors
     /// Returns `ToolError` if the installed tool's HTTP client cannot be built.
-    pub fn register_external(&mut self, def: InstalledToolDefinition) -> Result<(), ToolError> {
-        let tool = ExternalTool::new(def)?;
+    pub fn register_installed(&mut self, def: InstalledToolDefinition) -> Result<(), ToolError> {
+        let tool = InstalledTool::new(def)?;
         self.tools.insert(tool.name().to_string(), Box::new(tool));
         Ok(())
     }

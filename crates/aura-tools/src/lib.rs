@@ -28,7 +28,7 @@ pub mod definitions;
 pub mod domain_tools;
 mod error;
 mod executor;
-mod external;
+mod installed;
 pub(crate) mod fs_tools;
 pub(crate) mod registry;
 mod sandbox;
