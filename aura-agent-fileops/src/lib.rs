@@ -1,3 +1,7 @@
+#![forbid(unsafe_code)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(dead_code)]
+
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};

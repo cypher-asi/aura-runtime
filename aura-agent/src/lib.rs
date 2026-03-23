@@ -35,7 +35,7 @@ pub mod build;
 pub mod compaction;
 mod constants;
 pub mod events;
-pub mod file_ops;
+pub use aura_agent_fileops as file_ops;
 pub mod git;
 mod helpers;
 mod kernel_executor;
@@ -48,7 +48,7 @@ mod sanitize;
 pub mod self_review;
 pub mod shell_parse;
 pub mod types;
-pub mod verify;
+pub use aura_agent_verify as verify;
 
 pub mod agent_runner;
 pub mod message_conversion;

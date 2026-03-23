@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::file_ops::ErrorReferences;
+use aura_agent_fileops::ErrorReferences;
 
 fn type_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();

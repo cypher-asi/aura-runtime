@@ -47,6 +47,8 @@ members = [
     "aura-terminal",
     "aura-cli",
     "aura-agent",
+    "aura-agent-fileops",
+    "aura-agent-verify",
     "aura-auth",
     "aura-automaton",
     "aura-node",
