@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aura_kernel::ModelCallDelegate;
+use aura_runtime::ModelCallDelegate;
 use aura_reasoner::{Message, ModelProvider, ModelRequest, StopReason, ToolDefinition};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;

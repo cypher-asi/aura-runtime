@@ -1,7 +1,7 @@
 //! Tool call execution logic with policy checks and caching.
 
 use super::{ExecutedToolCall, ToolCache, TurnProcessor};
-use crate::policy::PermissionLevel;
+use aura_kernel::PermissionLevel;
 use aura_core::{
     tool_result_cache_key, Action, AgentId, EffectStatus, ToolCall, ToolResult, CACHEABLE_TOOLS,
 };

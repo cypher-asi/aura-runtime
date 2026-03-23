@@ -123,6 +123,7 @@ dependencies = [
  "aura-kernel",
  "aura-node",
  "aura-reasoner",
+ "aura-runtime",
  "aura-store",
  "aura-terminal",
  "aura-tools",
@@ -158,6 +159,7 @@ dependencies = [
  "aura-executor",
  "aura-kernel",
  "aura-reasoner",
+ "aura-runtime",
  "base64 0.22.1",
  "futures-util",
  "regex",
@@ -294,20 +296,15 @@ name = "aura-kernel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "aura-core",
  "aura-executor",
  "aura-reasoner",
  "aura-store",
- "aura-tools",
  "bytes",
- "dashmap 6.1.0",
- "futures-util",
  "hex",
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-util",
  "tracing",
 ]
 
@@ -357,6 +354,28 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "aura-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aura-core",
+ "aura-executor",
+ "aura-kernel",
+ "aura-reasoner",
+ "aura-store",
+ "aura-tools",
+ "bytes",
+ "dashmap 6.1.0",
+ "futures-util",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
  "tracing",
 ]
 

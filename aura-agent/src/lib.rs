@@ -56,7 +56,7 @@ pub mod task_context;
 pub mod task_executor;
 
 pub use agent_loop::{AgentLoop, AgentLoopConfig};
-pub use aura_kernel::ModelCallDelegate;
+pub use aura_runtime::ModelCallDelegate;
 pub use events::AgentLoopEvent;
 pub use kernel_executor::KernelToolExecutor;
 pub use types::{

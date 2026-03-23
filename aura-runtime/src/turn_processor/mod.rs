@@ -34,7 +34,7 @@ pub use delegate::ModelCallDelegate;
 pub use streaming::{StreamCallback, StreamCallbackEvent};
 pub use types::{ExecutedToolCall, StepResult, ToolCache, TurnEntry, TurnResult};
 
-use crate::policy::{Policy, PolicyConfig};
+use aura_kernel::{Policy, PolicyConfig};
 use aura_core::{AgentId, Transaction};
 use aura_executor::ExecutorRouter;
 use aura_reasoner::{

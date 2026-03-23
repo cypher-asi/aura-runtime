@@ -15,7 +15,7 @@ use aura_agent::prompts::default_system_prompt;
 use aura_agent::{AgentLoop, AgentLoopConfig, KernelToolExecutor};
 use aura_core::{Identity, Transaction};
 use aura_executor::ExecutorRouter;
-use aura_kernel::{ProcessManager, ProcessManagerConfig};
+use aura_runtime::{ProcessManager, ProcessManagerConfig};
 use aura_reasoner::{AnthropicProvider, MockProvider, ModelProvider};
 use aura_store::RocksStore;
 use aura_terminal::{App, Terminal, Theme, UiCommand, UiEvent};
