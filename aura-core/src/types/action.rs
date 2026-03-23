@@ -29,7 +29,7 @@ pub struct Action {
     /// Type of action
     pub kind: ActionKind,
     /// Versioned payload (opaque bytes)
-    #[serde(with = "super::bytes_serde")]
+    #[serde(with = "crate::serde_helpers::bytes_serde")]
     pub payload: Bytes,
 }
 

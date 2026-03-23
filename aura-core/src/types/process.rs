@@ -49,10 +49,10 @@ pub struct ActionResultPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     /// Standard output from the process
-    #[serde(default, with = "super::bytes_serde")]
+    #[serde(default, with = "crate::serde_helpers::bytes_serde")]
     pub stdout: Bytes,
     /// Standard error from the process
-    #[serde(default, with = "super::bytes_serde")]
+    #[serde(default, with = "crate::serde_helpers::bytes_serde")]
     pub stderr: Bytes,
     /// Whether the process succeeded
     pub success: bool,

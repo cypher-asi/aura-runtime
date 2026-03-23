@@ -958,12 +958,7 @@ impl App {
                 self.is_thinking = false;
             }
             UiCommand::ShowMessage(data) => {
-                let role = match data.role {
-                    crate::events::MessageRole::User => MessageRole::User,
-                    crate::events::MessageRole::Assistant => MessageRole::Assistant,
-                    crate::events::MessageRole::System => MessageRole::System,
-                };
-                let mut msg = Message::new(role, &data.content);
+                let mut msg = Message::new(data.role, &data.content);
                 if data.is_streaming {
                     msg.set_streaming(true);
                 }

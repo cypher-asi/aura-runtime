@@ -252,7 +252,7 @@ impl TaskToolExecutor {
 
         let categories = classify_build_errors(raw_output);
         let guidance = error_category_guidance(&categories);
-        let refs = crate::prompts::parse_error_references(raw_output);
+        let refs = crate::verify::parse_error_references(raw_output);
         let api_ref = file_ops::resolve_error_context(base_path, &refs);
 
         let mut enriched = raw_output.to_string();
@@ -505,9 +505,4 @@ pub fn looks_like_compiler_errors(output: &str) -> bool {
     let has_generic_errors = output.contains("error:") && output.contains("-->");
     let has_ts_errors = output.contains("TS2") && output.contains("error TS");
     has_rust_errors || has_generic_errors || has_ts_errors
-}
-
-/// Normalize a tool-reported path for consistent comparison.
-pub fn normalize_tool_path(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches("./").to_string()
 }

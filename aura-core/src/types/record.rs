@@ -19,7 +19,7 @@ pub struct RecordEntry {
     /// Kernel version that processed this entry
     pub kernel_version: u32,
     /// Hash of deterministic inputs used to decide
-    #[serde(with = "super::hex_bytes_32")]
+    #[serde(with = "crate::serde_helpers::hex_bytes_32")]
     pub context_hash: [u8; 32],
     /// Proposals from the reasoner (recorded verbatim)
     pub proposals: ProposalSet,

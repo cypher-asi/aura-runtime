@@ -13,7 +13,7 @@ pub struct Identity {
     /// Mutable display name
     pub name: String,
     /// Fingerprint of the identity
-    #[serde(with = "super::hex_bytes_32")]
+    #[serde(with = "crate::serde_helpers::hex_bytes_32")]
     pub identity_hash: [u8; 32],
 }
 

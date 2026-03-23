@@ -43,7 +43,7 @@ pub type TransactionKind = TransactionType;
 pub struct Transaction {
     /// Unique hash derived from content + previous tx hash (blockchain-style chain)
     /// Uses default (zeroed) hash for backwards compatibility with old records.
-    #[serde(default, with = "super::hex_hash")]
+    #[serde(default, with = "crate::serde_helpers::hex_hash")]
     pub hash: Hash,
     /// Target agent
     pub agent_id: AgentId,
@@ -52,13 +52,13 @@ pub struct Transaction {
     /// Type of transaction
     pub tx_type: TransactionType,
     /// Versioned payload (opaque bytes)
-    #[serde(with = "super::bytes_serde")]
+    #[serde(with = "crate::serde_helpers::bytes_serde")]
     pub payload: Bytes,
     /// Optional reference to a related transaction (for callbacks from async processes)
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "super::option_hex_hash"
+        with = "crate::serde_helpers::option_hex_hash"
     )]
     pub reference_tx_hash: Option<Hash>,
 }

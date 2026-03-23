@@ -8,9 +8,9 @@ mod fix;
 mod system;
 
 pub use context::build_agentic_task_context;
+pub use crate::verify::error_types::{parse_error_references, BuildFixAttemptRecord};
 pub use fix::{
-    build_fix_prompt_with_history, build_stub_fix_prompt, parse_error_references,
-    BuildFixAttemptRecord, BuildFixPromptParams,
+    build_fix_prompt_with_history, build_stub_fix_prompt, BuildFixPromptParams,
 };
 pub use system::{
     agentic_execution_system_prompt, build_chat_system_prompt, build_fix_system_prompt,

@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use aura_core::{tool_result_cache_key, CACHEABLE_TOOLS};
 use aura_reasoner::{ContentBlock, Message, ModelResponse, ToolResultContent};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
@@ -18,16 +19,8 @@ use crate::types::{AgentToolExecutor, BuildBaseline, ToolCallInfo, ToolCallResul
 use super::streaming;
 use super::{AgentLoop, AgentLoopConfig, LoopState};
 
-/// Tools whose successful results can be cached within a single agent run.
-const CACHEABLE_TOOLS: &[&str] = &["read_file", "list_files", "stat_file", "find_files", "search_code"];
-
 fn is_cacheable(tool_name: &str) -> bool {
     CACHEABLE_TOOLS.contains(&tool_name)
-}
-
-fn cache_key(tool_name: &str, input: &serde_json::Value) -> String {
-    let canonical = serde_json::to_string(input).unwrap_or_default();
-    format!("{tool_name}\0{canonical}")
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +105,7 @@ fn split_cached(
 
     for tc in tool_calls {
         if is_cacheable(&tc.name) {
-            let key = cache_key(&tc.name, &tc.input);
+            let key = tool_result_cache_key(&tc.name, &tc.input);
             if let Some(hit) = cache.get(&key) {
                 cached.push(ToolCallResult {
                     tool_use_id: tc.id.clone(),
@@ -147,7 +140,7 @@ fn update_cache(
     for r in executed {
         if let Some(tc) = uncached.iter().find(|t| t.id == r.tool_use_id) {
             if is_cacheable(&tc.name) && !r.is_error {
-                let key = cache_key(&tc.name, &tc.input);
+                let key = tool_result_cache_key(&tc.name, &tc.input);
                 cache.insert(key, r.content.clone());
             }
         }

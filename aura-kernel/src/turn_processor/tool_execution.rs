@@ -2,25 +2,15 @@
 
 use super::{ExecutedToolCall, ToolCache, TurnProcessor};
 use crate::policy::PermissionLevel;
-use aura_core::{Action, AgentId, EffectStatus, ToolCall, ToolResult};
+use aura_core::{
+    tool_result_cache_key, Action, AgentId, EffectStatus, ToolCall, ToolResult, CACHEABLE_TOOLS,
+};
 use aura_executor::ExecuteContext;
 use aura_reasoner::{ContentBlock, Message, ModelProvider, ToolResultContent};
 use aura_store::Store;
 use aura_tools::ToolRegistry;
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
-
-/// Tools whose results are safe to cache (no side effects).
-const CACHEABLE_TOOLS: &[&str] = &["list_files", "read_file", "stat_file", "find_files", "search_code"];
-
-/// Build a deterministic cache key from tool name and arguments.
-///
-/// Uses canonical JSON serialization so equivalent argument objects
-/// produce the same key regardless of property ordering.
-fn make_cache_key(tool_name: &str, args: &serde_json::Value) -> String {
-    let canonical = serde_json::to_string(args).unwrap_or_default();
-    format!("{tool_name}\0{canonical}")
-}
 
 impl<P, S, R> TurnProcessor<P, S, R>
 where
@@ -85,7 +75,7 @@ where
                 }
 
                 if CACHEABLE_TOOLS.contains(&name.as_str()) {
-                    let cache_key = make_cache_key(name, input);
+                    let cache_key = tool_result_cache_key(name, input);
                     if let Some(hit) = tool_cache.get(&cache_key) {
                         debug!(tool = %name, "Cache hit — returning cached result");
                         let mut cloned = hit.clone();
@@ -180,7 +170,7 @@ where
         // Phase 3: populate cache with successful cacheable results
         for result in &executed {
             if !result.is_error && CACHEABLE_TOOLS.contains(&result.tool_name.as_str()) {
-                let cache_key = make_cache_key(&result.tool_name, &result.tool_args);
+                let cache_key = tool_result_cache_key(&result.tool_name, &result.tool_args);
                 tool_cache.insert(cache_key, result.clone());
             }
         }

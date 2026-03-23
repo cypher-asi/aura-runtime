@@ -150,10 +150,10 @@ pub struct ToolResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     /// Standard output
-    #[serde(default, with = "super::bytes_serde")]
+    #[serde(default, with = "crate::serde_helpers::bytes_serde")]
     pub stdout: Bytes,
     /// Standard error
-    #[serde(default, with = "super::bytes_serde")]
+    #[serde(default, with = "crate::serde_helpers::bytes_serde")]
     pub stderr: Bytes,
     /// Additional metadata
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]

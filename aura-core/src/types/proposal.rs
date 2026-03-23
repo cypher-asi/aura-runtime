@@ -13,7 +13,7 @@ pub struct Proposal {
     /// Proposed action kind
     pub action_kind: ActionKind,
     /// Payload for the proposed action
-    #[serde(with = "super::bytes_serde")]
+    #[serde(with = "crate::serde_helpers::bytes_serde")]
     pub payload: Bytes,
     /// Optional reasoning for the proposal
     #[serde(default, skip_serializing_if = "Option::is_none")]

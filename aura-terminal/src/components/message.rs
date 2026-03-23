@@ -9,18 +9,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
-use serde::{Deserialize, Serialize};
 
-/// Message role.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MessageRole {
-    /// User message
-    User,
-    /// Assistant (AI) message
-    Assistant,
-    /// System message
-    System,
-}
+use crate::events::MessageRole;
 
 /// A chat message.
 #[derive(Debug, Clone)]

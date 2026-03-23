@@ -13,7 +13,7 @@ use std::fmt;
 ///
 /// The hash is computed from content + previous hash, creating an immutable chain.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Hash(#[serde(with = "hex_bytes_32")] pub [u8; 32]);
+pub struct Hash(#[serde(with = "crate::serde_helpers::hex_bytes_32")] pub [u8; 32]);
 
 impl Hash {
     /// Create a new `Hash` from raw bytes.
@@ -84,7 +84,7 @@ impl fmt::Display for Hash {
 
 /// Agent identifier - 32 bytes, derived from identity hash or UUID.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AgentId(#[serde(with = "hex_bytes_32")] pub [u8; 32]);
+pub struct AgentId(#[serde(with = "crate::serde_helpers::hex_bytes_32")] pub [u8; 32]);
 
 impl AgentId {
     /// Create a new `AgentId` from raw bytes.
@@ -147,7 +147,7 @@ impl fmt::Display for AgentId {
 
 /// Transaction identifier - 32 bytes, typically a hash of tx content.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TxId(#[serde(with = "hex_bytes_32")] pub [u8; 32]);
+pub struct TxId(#[serde(with = "crate::serde_helpers::hex_bytes_32")] pub [u8; 32]);
 
 impl TxId {
     /// Create a new `TxId` from raw bytes.
@@ -202,7 +202,7 @@ impl fmt::Display for TxId {
 
 /// Action identifier - 16 bytes, generated per action.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ActionId(#[serde(with = "hex_bytes_16")] pub [u8; 16]);
+pub struct ActionId(#[serde(with = "crate::serde_helpers::hex_bytes_16")] pub [u8; 16]);
 
 impl ActionId {
     /// Create a new `ActionId` from raw bytes.
@@ -261,7 +261,7 @@ impl fmt::Display for ActionId {
 
 /// Process identifier - 16 bytes, generated per async process.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ProcessId(#[serde(with = "hex_bytes_16")] pub [u8; 16]);
+pub struct ProcessId(#[serde(with = "crate::serde_helpers::hex_bytes_16")] pub [u8; 16]);
 
 impl ProcessId {
     /// Create a new `ProcessId` from raw bytes.
@@ -311,52 +311,6 @@ impl fmt::Debug for ProcessId {
 impl fmt::Display for ProcessId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_hex())
-    }
-}
-
-/// Helper module for hex serialization of 32-byte arrays.
-mod hex_bytes_32 {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&hex::encode(bytes))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        bytes
-            .try_into()
-            .map_err(|_| serde::de::Error::custom("expected 32 bytes"))
-    }
-}
-
-/// Helper module for hex serialization of 16-byte arrays.
-mod hex_bytes_16 {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &[u8; 16], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&hex::encode(bytes))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 16], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        bytes
-            .try_into()
-            .map_err(|_| serde::de::Error::custom("expected 16 bytes"))
     }
 }
 
