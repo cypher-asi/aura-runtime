@@ -62,10 +62,7 @@ impl ModelProvider for StreamingMockProvider {
         self.inner.complete(request).await
     }
 
-    async fn complete_streaming(
-        &self,
-        request: ModelRequest,
-    ) -> anyhow::Result<StreamEventStream> {
+    async fn complete_streaming(&self, request: ModelRequest) -> anyhow::Result<StreamEventStream> {
         let response = self.inner.complete(request).await?;
 
         let mut events: Vec<anyhow::Result<StreamEvent>> = Vec::new();
@@ -86,9 +83,7 @@ impl ModelProvider for StreamingMockProvider {
                         index,
                         content_type: StreamContentType::Text,
                     }));
-                    events.push(Ok(StreamEvent::TextDelta {
-                        text: text.clone(),
-                    }));
+                    events.push(Ok(StreamEvent::TextDelta { text: text.clone() }));
                     events.push(Ok(StreamEvent::ContentBlockStop { index }));
                 }
                 ContentBlock::ToolUse { id, name, input } => {
@@ -100,9 +95,7 @@ impl ModelProvider for StreamingMockProvider {
                         },
                     }));
                     let json = serde_json::to_string(input).unwrap_or_default();
-                    events.push(Ok(StreamEvent::InputJsonDelta {
-                        partial_json: json,
-                    }));
+                    events.push(Ok(StreamEvent::InputJsonDelta { partial_json: json }));
                     events.push(Ok(StreamEvent::ContentBlockStop { index }));
                 }
                 ContentBlock::Thinking { thinking, .. } => {

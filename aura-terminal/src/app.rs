@@ -507,8 +507,10 @@ impl App {
                         self.state = AppState::Processing;
                         self.status = "Authenticating...".to_string();
                         if let Some(tx) = &self.event_tx {
-                            let _ =
-                                tx.try_send(UiEvent::LoginCredentials { email, password: value });
+                            let _ = tx.try_send(UiEvent::LoginCredentials {
+                                email,
+                                password: value,
+                            });
                         }
                     }
                     _ => {}

@@ -2,10 +2,11 @@
 //!
 //! Manages the agent session using `AgentLoop` for multi-step orchestration.
 
-use aura_agent::{AgentLoop, AgentLoopConfig, AgentLoopResult, KernelToolExecutor};
+use aura_agent::{
+    prompts::default_system_prompt, AgentLoop, AgentLoopConfig, AgentLoopResult, KernelToolExecutor,
+};
 use aura_core::{AgentId, Identity};
 use aura_executor::ExecutorRouter;
-use aura_kernel::TurnConfig;
 use aura_reasoner::{AnthropicProvider, Message, MockProvider, ModelProvider, ToolDefinition};
 use aura_store::RocksStore;
 use aura_tools::{DefaultToolRegistry, ToolExecutor, ToolRegistry};
@@ -49,7 +50,7 @@ impl SessionConfig {
             std::env::var("AURA_AGENT_NAME").unwrap_or_else(|_| "CLI Agent".to_string());
 
         let mut loop_config = AgentLoopConfig {
-            system_prompt: TurnConfig::default().system_prompt,
+            system_prompt: default_system_prompt(),
             ..AgentLoopConfig::default()
         };
 

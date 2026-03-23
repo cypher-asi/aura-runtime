@@ -135,9 +135,7 @@ fn fix_unpaired_tool_uses(messages: &mut Vec<Message>) {
                 .map(|id| {
                     ContentBlock::tool_result(
                         &id,
-                        ToolResultContent::text(
-                            "[Tool result was lost during context compaction]",
-                        ),
+                        ToolResultContent::text("[Tool result was lost during context compaction]"),
                         true,
                     )
                 })
@@ -345,9 +343,9 @@ mod tests {
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[2].role, Role::User);
 
-        let has_result = messages[2].content.iter().any(|b| {
-            matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "t1")
-        });
+        let has_result = messages[2].content.iter().any(
+            |b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "t1"),
+        );
         assert!(has_result, "should have synthetic tool_result for t1");
     }
 
@@ -390,10 +388,13 @@ mod tests {
         assert_eq!(messages[1].role, Role::Assistant);
         assert_eq!(messages[2].role, Role::User);
 
-        let has_result = messages[2].content.iter().any(|b| {
-            matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "t1")
-        });
-        assert!(has_result, "tool_result should be in the merged user message");
+        let has_result = messages[2].content.iter().any(
+            |b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "t1"),
+        );
+        assert!(
+            has_result,
+            "tool_result should be in the merged user message"
+        );
     }
 
     #[test]
@@ -427,9 +428,9 @@ mod tests {
         assert!(messages.len() >= 5);
         let last_user = &messages[4];
         assert_eq!(last_user.role, Role::User);
-        let has_t2 = last_user.content.iter().any(|b| {
-            matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "t2")
-        });
+        let has_t2 = last_user.content.iter().any(
+            |b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "t2"),
+        );
         assert!(has_t2, "trailing tool_use should get synthetic result");
     }
 }

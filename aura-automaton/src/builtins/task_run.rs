@@ -144,9 +144,7 @@ impl Automaton for TaskRunAutomaton {
                 )
                 .await;
 
-            return self
-                .finalize_task(ctx, &task.id, &task.title, result)
-                .await;
+            return self.finalize_task(ctx, &task.id, &task.title, result).await;
         }
 
         let project_info = ProjectInfo {
@@ -206,7 +204,9 @@ impl Automaton for TaskRunAutomaton {
             notes: Default::default(),
             follow_ups: Default::default(),
             stub_fix_attempts: Default::default(),
-            task_phase: Arc::new(tokio::sync::Mutex::new(aura_agent::planning::TaskPhase::Exploring)),
+            task_phase: Arc::new(tokio::sync::Mutex::new(
+                aura_agent::planning::TaskPhase::Exploring,
+            )),
             self_review: Default::default(),
             event_tx: Some(event_tx.clone()),
         };
@@ -222,8 +222,7 @@ impl Automaton for TaskRunAutomaton {
             )
             .await;
 
-        self.finalize_task(ctx, &task.id, &task.title, result)
-            .await
+        self.finalize_task(ctx, &task.id, &task.title, result).await
     }
 }
 

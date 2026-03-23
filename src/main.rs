@@ -11,10 +11,11 @@ mod record_loader;
 
 use cli::{Cli, Commands, RunArgs, UiMode};
 
+use aura_agent::prompts::default_system_prompt;
 use aura_agent::{AgentLoop, AgentLoopConfig, KernelToolExecutor};
 use aura_core::{Identity, Transaction};
 use aura_executor::ExecutorRouter;
-use aura_kernel::{ProcessManager, ProcessManagerConfig, TurnConfig};
+use aura_kernel::{ProcessManager, ProcessManagerConfig};
 use aura_reasoner::{AnthropicProvider, MockProvider, ModelProvider};
 use aura_store::RocksStore;
 use aura_terminal::{App, Terminal, Theme, UiCommand, UiEvent};
@@ -204,7 +205,7 @@ async fn run_terminal(args: RunArgs) -> anyhow::Result<()> {
         .or_else(aura_auth::CredentialStore::load_token);
 
     let config = AgentLoopConfig {
-        system_prompt: TurnConfig::default().system_prompt,
+        system_prompt: default_system_prompt(),
         auth_token: auth_token.clone(),
         ..AgentLoopConfig::default()
     };

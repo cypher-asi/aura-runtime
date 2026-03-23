@@ -37,10 +37,10 @@
 
 use crate::worker::process_agent;
 use aura_agent::{AgentLoop, AgentLoopConfig, KernelToolExecutor};
-use aura_core::AgentId;
+use aura_core::{AgentId, AgentStatus};
 use aura_executor::{Executor, ExecutorRouter};
 use aura_reasoner::{ModelProvider, ToolDefinition};
-use aura_store::{AgentStatus, Store};
+use aura_store::Store;
 use dashmap::DashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

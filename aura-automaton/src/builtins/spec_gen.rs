@@ -129,13 +129,10 @@ impl Automaton for SpecGenAutomaton {
             .unwrap_or("claude-opus-4-6-20250514")
             .to_string();
 
-        let request = aura_reasoner::ModelRequest::builder(
-            &model,
-            SPEC_GENERATION_SYSTEM_PROMPT,
-        )
-        .messages(vec![aura_reasoner::Message::user(&requirements)])
-        .max_tokens(MAX_TOKENS)
-        .build();
+        let request = aura_reasoner::ModelRequest::builder(&model, SPEC_GENERATION_SYSTEM_PROMPT)
+            .messages(vec![aura_reasoner::Message::user(&requirements)])
+            .max_tokens(MAX_TOKENS)
+            .build();
 
         let response = self
             .provider

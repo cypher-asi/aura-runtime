@@ -35,7 +35,9 @@ pub enum PermissionLevel {
 pub fn default_tool_permission(tool: &str) -> PermissionLevel {
     match tool {
         // Safe read-only operations + command execution (autonomous operation)
-        "list_files" | "read_file" | "stat_file" | "search_code" | "run_command" => PermissionLevel::AlwaysAllow,
+        "list_files" | "read_file" | "stat_file" | "search_code" | "run_command" => {
+            PermissionLevel::AlwaysAllow
+        }
 
         // Write operations need confirmation once per session
         "write_file" | "edit_file" => PermissionLevel::AskOnce,

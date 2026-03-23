@@ -85,10 +85,12 @@ pub fn fs_write(
     let bytes_written = content.len();
     let truncated_warning = looks_truncated(content);
 
-    let mut result =
-        ToolResult::success("write_file", format!("Wrote {bytes_written} bytes to {path}"))
-            .with_metadata("bytes_written", bytes_written.to_string())
-            .with_metadata("file_existed", file_existed.to_string());
+    let mut result = ToolResult::success(
+        "write_file",
+        format!("Wrote {bytes_written} bytes to {path}"),
+    )
+    .with_metadata("bytes_written", bytes_written.to_string())
+    .with_metadata("file_existed", file_existed.to_string());
 
     if truncated_warning {
         result = result.with_metadata(

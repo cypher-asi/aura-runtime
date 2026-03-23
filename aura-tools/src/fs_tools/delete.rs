@@ -18,7 +18,10 @@ pub fn fs_delete(sandbox: &Sandbox, path: &str) -> Result<ToolResult, ToolError>
     }
 
     fs::remove_file(&resolved)?;
-    Ok(ToolResult::success("delete_file", format!("Deleted {path}")))
+    Ok(ToolResult::success(
+        "delete_file",
+        format!("Deleted {path}"),
+    ))
 }
 
 /// `fs_delete` tool: delete a file.

@@ -23,11 +23,11 @@
 )]
 
 mod config;
+mod node;
 pub mod protocol;
 mod router;
 mod scheduler;
 pub mod session;
-mod node;
 mod worker;
 
 pub use config::NodeConfig;

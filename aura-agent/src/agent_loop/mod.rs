@@ -200,7 +200,12 @@ impl AgentLoop {
 
             let request = state.build_request(&self.config, &tools);
             let response = match self
-                .call_model(provider, request, event_tx.as_ref(), cancellation_token.as_ref())
+                .call_model(
+                    provider,
+                    request,
+                    event_tx.as_ref(),
+                    cancellation_token.as_ref(),
+                )
                 .await
             {
                 Ok(r) => r,
@@ -239,9 +244,7 @@ impl AgentLoop {
     ) -> bool {
         match response.stop_reason {
             StopReason::EndTurn | StopReason::StopSequence => true,
-            StopReason::MaxTokens => {
-                !iteration::handle_max_tokens(&self.config, response, state)
-            }
+            StopReason::MaxTokens => !iteration::handle_max_tokens(&self.config, response, state),
             StopReason::ToolUse => {
                 tool_execution::handle_tool_use(self, response, executor, event_tx, state).await
             }

@@ -136,11 +136,7 @@ pub trait DomainApi: Send + Sync {
         task_id: &str,
         updates: TaskUpdate,
     ) -> anyhow::Result<TaskDescriptor>;
-    async fn transition_task(
-        &self,
-        task_id: &str,
-        status: &str,
-    ) -> anyhow::Result<TaskDescriptor>;
+    async fn transition_task(&self, task_id: &str, status: &str) -> anyhow::Result<TaskDescriptor>;
     async fn claim_next_task(
         &self,
         project_id: &str,

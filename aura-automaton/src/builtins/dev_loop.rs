@@ -112,7 +112,10 @@ impl Automaton for DevLoopAutomaton {
         // The runtime seeds AutomatonState before the first tick, so we use
         // config as the source of truth and persist the session_id via an event.
         ctx.emit(AutomatonEvent::LogLine {
-            message: format!("session {} created for project {}", session.id, cfg.project_id),
+            message: format!(
+                "session {} created for project {}",
+                session.id, cfg.project_id
+            ),
         });
 
         Ok(())
@@ -174,7 +177,10 @@ impl Automaton for DevLoopAutomaton {
                 ctx.state.set(STATE_COMPLETED_COUNT, &completed);
 
                 let mut work_log: Vec<String> = ctx.state.get(STATE_WORK_LOG).unwrap_or_default();
-                work_log.push(format!("Task (completed): {}\nNotes: {}", task.title, exec.notes));
+                work_log.push(format!(
+                    "Task (completed): {}\nNotes: {}",
+                    task.title, exec.notes
+                ));
                 ctx.state.set(STATE_WORK_LOG, &work_log);
 
                 ctx.emit(AutomatonEvent::TaskCompleted {
@@ -249,7 +255,13 @@ impl DevLoopAutomaton {
                 .unwrap_or(std::path::Path::new(&project.path));
             return self
                 .runner
-                .execute_shell_task(&ShellTaskParams { command: &shell_cmd, project_root: workspace }, None)
+                .execute_shell_task(
+                    &ShellTaskParams {
+                        command: &shell_cmd,
+                        project_root: workspace,
+                    },
+                    None,
+                )
                 .await
                 .map_err(|e| AutomatonError::AgentExecution(e.to_string()));
         }
@@ -314,7 +326,9 @@ impl DevLoopAutomaton {
             notes: Default::default(),
             follow_ups: Default::default(),
             stub_fix_attempts: Default::default(),
-            task_phase: Arc::new(tokio::sync::Mutex::new(aura_agent::planning::TaskPhase::Exploring)),
+            task_phase: Arc::new(tokio::sync::Mutex::new(
+                aura_agent::planning::TaskPhase::Exploring,
+            )),
             self_review: Default::default(),
             event_tx: Some(event_tx.clone()),
         };
@@ -418,9 +432,7 @@ pub(crate) fn forward_agent_event(
     let automaton_event = match evt {
         AgentLoopEvent::TextDelta(d) => AutomatonEvent::TextDelta { delta: d },
         AgentLoopEvent::ThinkingDelta(d) => AutomatonEvent::ThinkingDelta { delta: d },
-        AgentLoopEvent::ToolStart { id, name } => {
-            AutomatonEvent::ToolCallStarted { id, name }
-        }
+        AgentLoopEvent::ToolStart { id, name } => AutomatonEvent::ToolCallStarted { id, name },
         AgentLoopEvent::ToolResult {
             tool_use_id,
             tool_name,
@@ -462,7 +474,9 @@ impl aura_agent::types::AgentToolExecutor for NoOpToolExecutor {
     ) -> Vec<aura_agent::types::ToolCallResult> {
         tool_calls
             .iter()
-            .map(|tc| aura_agent::types::ToolCallResult::error(&tc.id, "no tool executor configured"))
+            .map(|tc| {
+                aura_agent::types::ToolCallResult::error(&tc.id, "no tool executor configured")
+            })
             .collect()
     }
 }

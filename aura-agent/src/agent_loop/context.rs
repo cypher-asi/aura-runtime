@@ -73,8 +73,7 @@ pub(super) fn compact_exploration_if_needed(config: &AgentLoopConfig, state: &mu
     state.exploration_compaction_done = true;
     debug!(
         exploration_count = state.exploration_state.count,
-        threshold,
-        "Proactive compaction triggered by exploration usage"
+        threshold, "Proactive compaction triggered by exploration usage"
     );
 }
 
@@ -94,9 +93,10 @@ pub(super) fn check_budget_warnings(
         streaming::emit(event_tx, AgentLoopEvent::Warning(warning));
     }
 
-    if let Some(warning) =
-        budget::check_exploration_warning(&mut state.exploration_state, config.exploration_allowance)
-    {
+    if let Some(warning) = budget::check_exploration_warning(
+        &mut state.exploration_state,
+        config.exploration_allowance,
+    ) {
         helpers::append_warning(&mut state.messages, &warning);
         streaming::emit(event_tx, AgentLoopEvent::Warning(warning));
     }

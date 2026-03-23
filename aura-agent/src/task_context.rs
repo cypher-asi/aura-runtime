@@ -31,25 +31,24 @@ pub async fn fetch_codebase_context(
     workspace_cache: &WorkspaceCache,
     workspace_map: &str,
 ) -> CodebaseContext {
-    let codebase_snapshot =
-        match file_ops::retrieve_task_relevant_files_cached(
-            project_folder,
-            task_title,
-            task_description,
-            50_000,
-            workspace_cache,
-        )
-        .await
-        {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("cached file retrieval failed, falling back to basic read: {e}");
-                file_ops::read_relevant_files(project_folder, 50_000).unwrap_or_else(|e2| {
-                    tracing::warn!("fallback read_relevant_files also failed: {e2}");
-                    String::new()
-                })
-            }
-        };
+    let codebase_snapshot = match file_ops::retrieve_task_relevant_files_cached(
+        project_folder,
+        task_title,
+        task_description,
+        50_000,
+        workspace_cache,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("cached file retrieval failed, falling back to basic read: {e}");
+            file_ops::read_relevant_files(project_folder, 50_000).unwrap_or_else(|e2| {
+                tracing::warn!("fallback read_relevant_files also failed: {e2}");
+                String::new()
+            })
+        }
+    };
 
     let dep_api_context = if !workspace_map.is_empty() {
         file_ops::resolve_task_dep_api_context_cached(
@@ -310,8 +309,7 @@ pub fn resolve_completed_deps<'a>(
     all_tasks
         .iter()
         .filter(|t| {
-            dependency_ids.iter().any(|dep_id| t.title == *dep_id)
-                && !t.execution_notes.is_empty()
+            dependency_ids.iter().any(|dep_id| t.title == *dep_id) && !t.execution_notes.is_empty()
         })
         .collect()
 }

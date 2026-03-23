@@ -2,6 +2,11 @@
 //!
 //! Ported from the app's `aura-tools` crate. Provides lazily-cached
 //! [`ToolDefinition`] sets for each agent mode.
+//!
+//! NOTE: These definitions encode product-level policy (which tools are available
+//! in chat vs engine vs multi-project modes). Consider migrating mode-specific
+//! tool set composition to the caller (aura-cli, aura-node, or a shared session
+//! crate) and keeping only individual tool schemas here.
 
 use aura_reasoner::ToolDefinition;
 use std::sync::{Arc, LazyLock};
@@ -64,10 +69,7 @@ fn compact_tool(name: &str, description: &str, schema: serde_json::Value) -> Too
 }
 
 fn strip_property_descriptions(mut schema: serde_json::Value) -> serde_json::Value {
-    if let Some(props) = schema
-        .get_mut("properties")
-        .and_then(|p| p.as_object_mut())
-    {
+    if let Some(props) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) {
         for (_key, prop_val) in props.iter_mut() {
             if let Some(obj) = prop_val.as_object_mut() {
                 obj.remove("description");

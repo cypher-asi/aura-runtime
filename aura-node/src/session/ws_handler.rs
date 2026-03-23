@@ -302,9 +302,7 @@ fn start_turn(
     let stream_forward_handle = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let msg = match event {
-                AgentLoopEvent::TextDelta(text) => {
-                    OutboundMessage::TextDelta(TextDelta { text })
-                }
+                AgentLoopEvent::TextDelta(text) => OutboundMessage::TextDelta(TextDelta { text }),
                 AgentLoopEvent::ThinkingDelta(thinking) => {
                     OutboundMessage::ThinkingDelta(ThinkingDelta { thinking })
                 }

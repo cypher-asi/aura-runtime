@@ -239,14 +239,8 @@ pub fn parse_test_output(
 
     let jest_results = parse_jest_output(&combined);
     if !jest_results.is_empty() {
-        let passed = jest_results
-            .iter()
-            .filter(|r| r.status == "passed")
-            .count();
-        let failed = jest_results
-            .iter()
-            .filter(|r| r.status == "failed")
-            .count();
+        let passed = jest_results.iter().filter(|r| r.status == "passed").count();
+        let failed = jest_results.iter().filter(|r| r.status == "failed").count();
         let summary = format!("{passed} passed, {failed} failed");
         return (jest_results, summary);
     }

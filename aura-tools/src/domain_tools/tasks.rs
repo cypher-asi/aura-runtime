@@ -68,10 +68,16 @@ pub async fn delete_task(api: &dyn DomainApi, _project_id: &str, input: &Value) 
         Ok(id) => id,
         Err(e) => return json!({ "ok": false, "error": e }).to_string(),
     };
-    match api.update_task(&task_id, TaskUpdate {
-        status: Some("deleted".to_string()),
-        ..Default::default()
-    }).await {
+    match api
+        .update_task(
+            &task_id,
+            TaskUpdate {
+                status: Some("deleted".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    {
         Ok(_) => json!({ "ok": true, "deleted": task_id }).to_string(),
         Err(e) => json!({ "ok": false, "error": e.to_string() }).to_string(),
     }

@@ -221,19 +221,13 @@ where
     /// # Errors
     ///
     /// Returns error if the model completion fails.
-    pub async fn resolve_model_call(
-        &self,
-        request: ModelRequest,
-    ) -> anyhow::Result<ModelResponse> {
+    pub async fn resolve_model_call(&self, request: ModelRequest) -> anyhow::Result<ModelResponse> {
         self.resolve_model_response(request).await
     }
 
     /// Resolve a model response: replay stub, streaming completion, or
     /// standard completion depending on configuration.
-    async fn resolve_model_response(
-        &self,
-        request: ModelRequest,
-    ) -> anyhow::Result<ModelResponse> {
+    async fn resolve_model_response(&self, request: ModelRequest) -> anyhow::Result<ModelResponse> {
         if self.config.replay_mode {
             debug!("Replay mode: skipping model call");
             Ok(ModelResponse::new(

@@ -106,10 +106,7 @@ fn format_fix_header(
     header
 }
 
-fn detect_api_hallucination(
-    error_refs: &ErrorReferences,
-    categories: &mut Vec<ErrorCategory>,
-) {
+fn detect_api_hallucination(error_refs: &ErrorReferences, categories: &mut Vec<ErrorCategory>) {
     let mut type_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for (t, _) in &error_refs.methods_not_found {
         *type_counts.entry(t.as_str()).or_insert(0) += 1;
@@ -323,8 +320,15 @@ mod tests {
         let task = test_task("Add login handler", "Create the login endpoint");
         let session = test_session();
         let prompt = build_fix_prompt(
-            &project, &spec, &task, &session, "", "cargo build",
-            "error: cannot find function", "", "",
+            &project,
+            &spec,
+            &task,
+            &session,
+            "",
+            "cargo build",
+            "error: cannot find function",
+            "",
+            "",
         );
         assert!(
             prompt.contains("Add login handler"),
@@ -486,10 +490,12 @@ error[E0599]: no method named `bar` found for struct `MyStruct` in the current s
 
     #[test]
     fn parse_error_references_extracts_missing_fields() {
-        let stderr =
-            r#"error[E0063]: missing field `name` in initializer of `crate::types::User`"#;
+        let stderr = r#"error[E0063]: missing field `name` in initializer of `crate::types::User`"#;
         let refs = parse_error_references(stderr);
-        assert!(refs.missing_fields.iter().any(|(t, f)| t == "User" && f == "name"));
+        assert!(refs
+            .missing_fields
+            .iter()
+            .any(|(t, f)| t == "User" && f == "name"));
     }
 
     #[test]

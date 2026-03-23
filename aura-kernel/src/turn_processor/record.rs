@@ -63,8 +63,7 @@ where
                     ToolResultContent::Json(v) => Bytes::from(serde_json::to_vec(v)?),
                 };
 
-                let effect =
-                    Effect::new(action_id, EffectKind::Agreement, effect_status, payload);
+                let effect = Effect::new(action_id, EffectKind::Agreement, effect_status, payload);
                 effects.push(effect);
             }
         }

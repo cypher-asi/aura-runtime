@@ -282,10 +282,7 @@ impl<R: ProjectResolver + 'static> AgentToolExecutor for RoutingToolExecutor<R> 
         for (i, tc) in tool_calls.iter().enumerate() {
             match self.resolver.resolve(&tc.input) {
                 Ok(_pid) => valid_calls.push((i, tc.clone())),
-                Err(msg) => error_results.push((
-                    i,
-                    ToolCallResult::error(tc.id.clone(), msg),
-                )),
+                Err(msg) => error_results.push((i, ToolCallResult::error(tc.id.clone(), msg))),
             }
         }
 
@@ -424,10 +421,7 @@ mod tests {
         let resolver = SingleProjectResolver {
             project_id: "proj-1".into(),
         };
-        assert_eq!(
-            resolver.resolve(&serde_json::json!({})).unwrap(),
-            "proj-1",
-        );
+        assert_eq!(resolver.resolve(&serde_json::json!({})).unwrap(), "proj-1",);
         assert!(resolver.sequential_create_task());
     }
 

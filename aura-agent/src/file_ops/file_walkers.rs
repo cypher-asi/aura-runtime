@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::workspace_map::{extract_signatures_from_content, read_signatures_only};
-use super::{INCLUDE_EXTENSIONS, SKIP_DIRS};
 use super::FileOpsError;
+use super::{INCLUDE_EXTENSIONS, SKIP_DIRS};
 
 /// Collect all .rs files in a directory recursively, reading full content.
 pub(crate) fn collect_rs_files_recursive(

@@ -149,9 +149,9 @@ async fn test_max_tokens_with_pending_tools_injects_errors() {
     assert!(result.total_text.contains("Recovered after truncation."));
 
     let has_error_tool_result = result.messages.iter().any(|msg| {
-        msg.content.iter().any(|block| {
-            matches!(block, ContentBlock::ToolResult { is_error: true, .. })
-        })
+        msg.content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::ToolResult { is_error: true, .. }))
     });
     assert!(
         has_error_tool_result,
@@ -164,9 +164,7 @@ async fn test_max_tokens_without_tools_breaks() {
     let executor = MockExecutor { results: vec![] };
 
     let provider = MockProvider::new()
-        .with_response(
-            MockResponse::text("Truncated text").with_stop_reason(StopReason::MaxTokens),
-        )
+        .with_response(MockResponse::text("Truncated text").with_stop_reason(StopReason::MaxTokens))
         .with_response(MockResponse::text("Should not reach this"));
 
     let config = AgentLoopConfig {

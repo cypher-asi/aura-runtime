@@ -1,4 +1,9 @@
 //! Request types for the reasoner.
+//!
+//! NOTE: `ProposeRequest`, `RecordSummary`, and `ProposeLimits` are kernel integration
+//! DTOs that couple this crate to aura-core domain types. Consider migrating them to
+//! aura-core or a shared protocol crate in a future refactor to keep aura-reasoner
+//! focused on LLM client concerns.
 
 use aura_core::{ActionKind, AgentId, Transaction};
 use serde::{Deserialize, Serialize};

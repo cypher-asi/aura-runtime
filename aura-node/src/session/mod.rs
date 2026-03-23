@@ -8,9 +8,8 @@ mod ws_handler;
 pub use ws_handler::handle_ws_connection;
 
 use crate::protocol::SessionInit;
-use aura_agent::AgentLoopConfig;
+use aura_agent::{prompts::default_system_prompt, AgentLoopConfig};
 use aura_core::{AgentId, ExternalToolDefinition};
-use aura_kernel::TurnConfig;
 use aura_reasoner::{Message, ModelProvider, ToolDefinition};
 use aura_tools::ToolConfig;
 use std::path::PathBuf;
@@ -115,7 +114,7 @@ impl Session {
             max_iterations: self.max_turns as usize,
             model: self.model.clone(),
             system_prompt: if self.system_prompt.is_empty() {
-                TurnConfig::default().system_prompt
+                default_system_prompt()
             } else {
                 self.system_prompt.clone()
             },

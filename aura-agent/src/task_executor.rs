@@ -222,10 +222,7 @@ impl TaskToolExecutor {
         }
         let op = match tool_name {
             "write_file" => {
-                let content = input
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let content = input.get("content").and_then(|v| v.as_str()).unwrap_or("");
                 FileOp::Create {
                     path: path.to_string(),
                     content: content.to_string(),

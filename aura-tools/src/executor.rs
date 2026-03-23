@@ -65,8 +65,14 @@ impl ToolExecutor {
 
         // Category-level permission checks
         const FS_TOOLS: &[&str] = &[
-            "read_file", "write_file", "edit_file", "delete_file",
-            "list_files", "find_files", "stat_file", "search_code",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "list_files",
+            "find_files",
+            "stat_file",
+            "search_code",
         ];
         const CMD_TOOLS: &[&str] = &["run_command"];
 

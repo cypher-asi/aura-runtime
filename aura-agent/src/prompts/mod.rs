@@ -6,16 +6,16 @@
 mod context;
 mod fix;
 mod system;
+mod turn_kernel_system;
 
-pub use context::build_agentic_task_context;
 pub use crate::verify::error_types::{parse_error_references, BuildFixAttemptRecord};
-pub use fix::{
-    build_fix_prompt_with_history, build_stub_fix_prompt, BuildFixPromptParams,
-};
+pub use context::build_agentic_task_context;
+pub use fix::{build_fix_prompt_with_history, build_stub_fix_prompt, BuildFixPromptParams};
 pub use system::{
     agentic_execution_system_prompt, build_chat_system_prompt, build_fix_system_prompt,
     CHAT_SYSTEM_PROMPT_BASE, CONTEXT_SUMMARY_SYSTEM_PROMPT,
 };
+pub use turn_kernel_system::default_system_prompt;
 
 /// Minimal project descriptor for prompt builders.
 #[derive(Debug)]

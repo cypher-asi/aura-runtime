@@ -35,6 +35,10 @@ impl AnthropicConfig {
     /// # Errors
     ///
     /// Returns error if API key is not set.
+    ///
+    /// NOTE: This method embeds Aura-specific environment variable names
+    /// (AURA_ROUTER_URL, AURA_LLM_ROUTING). Consider accepting these as
+    /// parameters or moving deployment config to the caller.
     pub fn from_env() -> anyhow::Result<Self> {
         let routing_mode = match std::env::var("AURA_LLM_ROUTING").as_deref() {
             Ok("direct") => RoutingMode::Direct,
@@ -61,8 +65,8 @@ impl AnthropicConfig {
             }
         };
 
-        let default_model = std::env::var("AURA_ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "claude-opus-4-6".to_string());
+        let default_model =
+            std::env::var("AURA_ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-opus-4-6".to_string());
 
         let timeout_ms = std::env::var("AURA_MODEL_TIMEOUT_MS")
             .ok()

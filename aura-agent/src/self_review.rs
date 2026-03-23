@@ -48,8 +48,7 @@ impl SelfReviewGuard {
 
     /// Record that `path` was read.
     pub fn record_read(&mut self, path: &str) {
-        self.read_since_write
-            .insert(normalize_tool_path(path));
+        self.read_since_write.insert(normalize_tool_path(path));
     }
 
     /// Returns the list of modified-but-unreviewed paths, or `None` if

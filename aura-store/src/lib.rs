@@ -15,10 +15,11 @@ mod keys;
 mod rocks_store;
 mod store;
 
+pub use aura_core::AgentStatus;
 pub use error::StoreError;
 pub use keys::{AgentMetaKey, InboxKey, KeyCodec, MetaField, RecordKey};
 pub use rocks_store::RocksStore;
-pub use store::{AgentStatus, Store};
+pub use store::Store;
 
 /// Column family names.
 pub mod cf {

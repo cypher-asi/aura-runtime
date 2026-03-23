@@ -8,6 +8,7 @@ mod identity;
 mod process;
 mod proposal;
 mod record;
+mod status;
 mod tool;
 mod transaction;
 
@@ -17,6 +18,7 @@ pub use identity::Identity;
 pub use process::{ActionResultPayload, ProcessPending};
 pub use proposal::{Decision, Proposal, ProposalSet, RejectedProposal, Trace};
 pub use record::{RecordEntry, RecordEntryBuilder, KERNEL_VERSION};
+pub use status::AgentStatus;
 pub use tool::{
     ExternalToolDefinition, ToolCall, ToolDecision, ToolExecution, ToolProposal, ToolResult,
 };

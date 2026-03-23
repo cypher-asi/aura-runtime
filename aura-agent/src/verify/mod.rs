@@ -26,7 +26,9 @@ pub mod signatures;
 pub mod test;
 pub mod utils;
 
-pub use build::{capture_build_baseline, verify_and_fix_build, BuildVerifyParams, BuildVerifyResult};
+pub use build::{
+    capture_build_baseline, verify_and_fix_build, BuildVerifyParams, BuildVerifyResult,
+};
 pub use common::{describe_file_ops, summarize_file_ops};
 pub use error_types::{parse_error_references, BuildFixAttemptRecord};
 pub use runner::{parse_test_output, run_build_command, BuildResult, IndividualTestResult};

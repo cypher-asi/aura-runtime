@@ -11,8 +11,9 @@ use aura_reasoner::{ContentBlock, Message, Role};
 pub fn append_warning(messages: &mut Vec<Message>, warning: &str) {
     if let Some(last) = messages.last_mut() {
         if last.role == Role::User {
-            last.content
-                .push(ContentBlock::Text { text: warning.to_string() });
+            last.content.push(ContentBlock::Text {
+                text: warning.to_string(),
+            });
             return;
         }
     }
@@ -149,11 +150,17 @@ mod tests {
         });
         let result = summarize_write_input("write_file", &input).unwrap();
         assert_eq!(result["path"], "src/main.rs");
-        assert!(result["_summarized"].as_str().unwrap().contains("32 bytes written"));
+        assert!(result["_summarized"]
+            .as_str()
+            .unwrap()
+            .contains("32 bytes written"));
 
         let result2 = summarize_write_input("write_file", &input).unwrap();
         assert_eq!(result2["path"], "src/main.rs");
-        assert!(result2["_summarized"].as_str().unwrap().contains("bytes written"));
+        assert!(result2["_summarized"]
+            .as_str()
+            .unwrap()
+            .contains("bytes written"));
     }
 
     #[test]

@@ -21,10 +21,7 @@ use super::{emit, FixProvider, VerifyEvent};
 /// Used before task execution to establish a baseline so that verification
 /// can distinguish pre-existing failures from regressions introduced by the
 /// current task.
-pub async fn capture_test_baseline(
-    project_root: &Path,
-    test_command: &str,
-) -> HashSet<String> {
+pub async fn capture_test_baseline(project_root: &Path, test_command: &str) -> HashSet<String> {
     if test_command.trim().is_empty() {
         return HashSet::new();
     }
@@ -153,10 +150,7 @@ pub async fn run_and_handle_tests(
     Ok((false, inp, out))
 }
 
-fn check_baseline_failures(
-    tests: &[IndividualTestResult],
-    baseline: &HashSet<String>,
-) -> bool {
+fn check_baseline_failures(tests: &[IndividualTestResult], baseline: &HashSet<String>) -> bool {
     if baseline.is_empty() {
         return false;
     }

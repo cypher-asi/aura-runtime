@@ -12,11 +12,11 @@ mod progress;
 mod status;
 mod tool_card;
 
+pub use crate::events::MessageRole;
 pub use code_block::CodeBlock;
 pub use diff::{DiffLine, DiffLineType, DiffView};
 pub use header::HeaderBar;
 pub use input::InputField;
-pub use crate::events::MessageRole;
 pub use message::Message;
 pub use progress::ProgressBar;
 pub use status::StatusBar;

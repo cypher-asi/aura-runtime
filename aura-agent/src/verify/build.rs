@@ -145,24 +145,21 @@ pub async fn verify_and_fix_build(
     fix_provider: &dyn FixProvider,
     event_tx: Option<&tokio::sync::mpsc::UnboundedSender<VerifyEvent>>,
 ) -> anyhow::Result<BuildVerifyResult> {
-    let mut build_cmd = match resolve_build_command(
-        params.project_root,
-        params.build_command,
-        event_tx,
-    ) {
-        Some(cmd) => cmd,
-        None => {
-            return Ok(BuildVerifyResult {
-                fix_ops: vec![],
-                build_passed: true,
-                attempts_used: 0,
-                duplicate_bailouts: 0,
-                fix_input_tokens: 0,
-                fix_output_tokens: 0,
-                last_stderr: String::new(),
-            });
-        }
-    };
+    let mut build_cmd =
+        match resolve_build_command(params.project_root, params.build_command, event_tx) {
+            Some(cmd) => cmd,
+            None => {
+                return Ok(BuildVerifyResult {
+                    fix_ops: vec![],
+                    build_passed: true,
+                    attempts_used: 0,
+                    duplicate_bailouts: 0,
+                    fix_input_tokens: 0,
+                    fix_output_tokens: 0,
+                    last_stderr: String::new(),
+                });
+            }
+        };
 
     let base_path = params.project_root;
     let mut fix_ops: Vec<FileOp> = Vec::new();
@@ -185,9 +182,7 @@ pub async fn verify_and_fix_build(
                 }
             });
         } else {
-            tokio::spawn(async move {
-                while line_rx.recv().await.is_some() {}
-            });
+            tokio::spawn(async move { while line_rx.recv().await.is_some() {} });
         }
 
         emit(
@@ -315,10 +310,7 @@ pub async fn verify_and_fix_build(
         }
 
         // --- request and apply fix ---
-        emit(
-            event_tx,
-            VerifyEvent::BuildFixAttempt { attempt },
-        );
+        emit(event_tx, VerifyEvent::BuildFixAttempt { attempt });
 
         let (response, i, o) = fix_provider
             .request_fix(&build_cmd, &br.stderr, &br.stdout, &prior)

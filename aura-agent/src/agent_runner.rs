@@ -26,8 +26,7 @@ use crate::prompts::{
 use crate::task_context;
 use crate::types::{AgentLoopResult, AgentToolExecutor};
 use crate::verify::{
-    auto_correct_build_command, normalize_error_signature, run_build_command,
-    BuildFixAttemptRecord,
+    auto_correct_build_command, normalize_error_signature, run_build_command, BuildFixAttemptRecord,
 };
 
 // ---------------------------------------------------------------------------

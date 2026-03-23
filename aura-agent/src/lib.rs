@@ -31,29 +31,29 @@
 mod agent_loop;
 pub mod blocking;
 mod budget;
-pub mod policy;
 pub mod build;
 pub mod compaction;
 mod constants;
-pub mod file_ops;
-pub mod planning;
-pub mod prompts;
 pub mod events;
+pub mod file_ops;
+pub mod git;
 mod helpers;
 mod kernel_executor;
+pub mod parser;
+pub mod planning;
+pub mod policy;
+pub mod prompts;
 mod read_guard;
 mod sanitize;
-pub mod git;
-pub mod parser;
 pub mod self_review;
 pub mod shell_parse;
 pub mod types;
 pub mod verify;
 
 pub mod agent_runner;
+pub mod message_conversion;
 pub mod task_context;
 pub mod task_executor;
-pub mod message_conversion;
 
 pub use agent_loop::{AgentLoop, AgentLoopConfig};
 pub use aura_kernel::ModelCallDelegate;

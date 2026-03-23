@@ -38,7 +38,8 @@
 use crate::cf;
 use crate::error::StoreError;
 use crate::keys::{AgentMetaKey, InboxKey, KeyCodec, RecordKey};
-use crate::store::{AgentStatus, Store};
+use crate::store::Store;
+use aura_core::AgentStatus;
 use aura_core::{AgentId, RecordEntry, Transaction};
 use rocksdb::{
     BoundColumnFamily, ColumnFamilyDescriptor, DBWithThreadMode, IteratorMode, MultiThreaded,

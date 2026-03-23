@@ -30,12 +30,7 @@ impl DomainToolExecutor {
     ///
     /// `project_id` is threaded through from the session context.
     /// Returns a JSON string result (always contains an `ok` field).
-    pub async fn execute(
-        &self,
-        tool_name: &str,
-        project_id: &str,
-        input: &Value,
-    ) -> String {
+    pub async fn execute(&self, tool_name: &str, project_id: &str, input: &Value) -> String {
         match tool_name {
             // Specs
             "list_specs" => specs::list_specs(self.api.as_ref(), project_id, input).await,
@@ -49,15 +44,11 @@ impl DomainToolExecutor {
             "create_task" => tasks::create_task(self.api.as_ref(), project_id, input).await,
             "update_task" => tasks::update_task(self.api.as_ref(), project_id, input).await,
             "delete_task" => tasks::delete_task(self.api.as_ref(), project_id, input).await,
-            "transition_task" => {
-                tasks::transition_task(self.api.as_ref(), project_id, input).await
-            }
+            "transition_task" => tasks::transition_task(self.api.as_ref(), project_id, input).await,
 
             // Project
             "get_project" => project::get_project(self.api.as_ref(), project_id, input).await,
-            "update_project" => {
-                project::update_project(self.api.as_ref(), project_id, input).await
-            }
+            "update_project" => project::update_project(self.api.as_ref(), project_id, input).await,
 
             other => {
                 warn!(tool = other, "unknown domain tool");

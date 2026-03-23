@@ -105,7 +105,11 @@ mod tests {
             Role::Assistant,
             vec![
                 ContentBlock::text("Let me help you."),
-                ContentBlock::tool_use("tool1", "read_file", serde_json::json!({"path": "test.txt"})),
+                ContentBlock::tool_use(
+                    "tool1",
+                    "read_file",
+                    serde_json::json!({"path": "test.txt"}),
+                ),
             ],
         );
 
