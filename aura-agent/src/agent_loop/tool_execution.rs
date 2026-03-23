@@ -51,8 +51,8 @@ pub(super) async fn handle_tool_use(
 
     let (cached_results, uncached_calls) = split_cached(&tool_calls, &state.tool_cache);
 
-    let (executed_results, is_stalled) = if uncached_calls.is_empty() {
-        (Vec::new(), false)
+    let (executed_results, side_messages, is_stalled) = if uncached_calls.is_empty() {
+        (Vec::new(), Vec::new(), false)
     } else {
         agent
             .process_tool_results(&uncached_calls, executor, state)
@@ -66,7 +66,7 @@ pub(super) async fn handle_tool_use(
     emit_tool_results(event_tx, &all_results, &tool_calls);
 
     let should_stop = all_results.iter().any(|r| r.stop_loop);
-    push_tool_result_message(&mut state.messages, all_results);
+    push_tool_result_message_with_context(&mut state.messages, all_results, side_messages);
 
     if should_stop {
         return true;
@@ -180,13 +180,29 @@ fn emit_tool_results(
     }
 }
 
-fn push_tool_result_message(messages: &mut Vec<Message>, results: Vec<ToolCallResult>) {
-    let converted: Vec<(String, ToolResultContent, bool)> = results
+/// Build a single user message with optional context text blocks followed by
+/// tool_result blocks.  This keeps the tool_result in the message immediately
+/// after the assistant's tool_use, which is required by the Anthropic API.
+fn push_tool_result_message_with_context(
+    messages: &mut Vec<Message>,
+    results: Vec<ToolCallResult>,
+    context_texts: Vec<String>,
+) {
+    let mut blocks: Vec<ContentBlock> = context_texts
         .into_iter()
-        .map(|r| (r.tool_use_id, ToolResultContent::text(r.content), r.is_error))
+        .map(|text| ContentBlock::Text { text })
         .collect();
-    if !converted.is_empty() {
-        messages.push(Message::tool_results(converted));
+
+    for r in results {
+        blocks.push(ContentBlock::tool_result(
+            &r.tool_use_id,
+            ToolResultContent::text(r.content),
+            r.is_error,
+        ));
+    }
+
+    if !blocks.is_empty() {
+        messages.push(Message::new(aura_reasoner::Role::User, blocks));
     }
 }
 
@@ -194,7 +210,7 @@ fn handle_stall(event_tx: Option<&UnboundedSender<AgentLoopEvent>>, state: &mut 
     let msg = "CRITICAL: Agent appears stalled — repeatedly failing \
                to write to the same files. Stopping to prevent \
                infinite loop. Try a different approach or ask for help.";
-    helpers::push_or_replace_warning(&mut state.messages, msg);
+    append_warning_to_last_user_message(&mut state.messages, msg);
     streaming::emit(
         event_tx,
         AgentLoopEvent::Error {
@@ -206,6 +222,20 @@ fn handle_stall(event_tx: Option<&UnboundedSender<AgentLoopEvent>>, state: &mut 
     state.result.stalled = true;
 }
 
+/// Append a warning text block to the last user message if one exists,
+/// otherwise push a new user message. This avoids inserting a separate
+/// user message that could break tool_use/tool_result adjacency.
+fn append_warning_to_last_user_message(messages: &mut Vec<Message>, warning: &str) {
+    if let Some(last) = messages.last_mut() {
+        if last.role == aura_reasoner::Role::User {
+            last.content
+                .push(ContentBlock::Text { text: warning.to_string() });
+            return;
+        }
+    }
+    messages.push(Message::user(warning));
+}
+
 // ---------------------------------------------------------------------------
 // Core tool result processing (blocking, execution, tracking, build)
 // ---------------------------------------------------------------------------
@@ -213,19 +243,23 @@ fn handle_stall(event_tx: Option<&UnboundedSender<AgentLoopEvent>>, state: &mut 
 impl AgentLoop {
     /// Process tool call results from one iteration.
     ///
-    /// Applies blocking detection, tracks writes/reads/commands,
-    /// manages exploration budget, and handles build checks.
+    /// Returns `(results, side_messages, is_stalled)` where `side_messages`
+    /// are warning/build texts that should be embedded into the tool_result
+    /// user message rather than pushed as separate messages (which would
+    /// violate Anthropic's tool_use/tool_result adjacency requirement).
     pub(crate) async fn process_tool_results(
         &self,
         tool_calls: &[ToolCallInfo],
         executor: &dyn AgentToolExecutor,
         state: &mut LoopState,
-    ) -> (Vec<ToolCallResult>, bool) {
+    ) -> (Vec<ToolCallResult>, Vec<String>, bool) {
+        let mut side_messages: Vec<String> = Vec::new();
+
         let (blocked_results, to_execute) = partition_blocked(
             tool_calls,
             &state.blocking_ctx,
             &state.read_guard,
-            &mut state.messages,
+            &mut side_messages,
         );
 
         let executed = if to_execute.is_empty() {
@@ -246,14 +280,16 @@ impl AgentLoop {
         let stalled = check_stall_detection(&mut state.stall_detector, &to_execute, &executed);
 
         if any_write_success && state.build_cooldown == 0 {
-            run_auto_build(
+            if let Some(build_text) = run_auto_build(
                 &self.config,
                 executor,
-                &mut state.messages,
                 &mut state.build_cooldown,
                 state.build_baseline.as_ref(),
             )
-            .await;
+            .await
+            {
+                side_messages.push(build_text);
+            }
         }
 
         if any_write_success {
@@ -262,7 +298,7 @@ impl AgentLoop {
 
         let mut all_results = blocked_results;
         all_results.extend(executed);
-        (all_results, stalled)
+        (all_results, side_messages, stalled)
     }
 }
 
@@ -270,7 +306,7 @@ fn partition_blocked(
     tool_calls: &[ToolCallInfo],
     blocking_ctx: &BlockingContext,
     read_guard: &ReadGuardState,
-    messages: &mut Vec<Message>,
+    side_messages: &mut Vec<String>,
 ) -> (Vec<ToolCallResult>, Vec<ToolCallInfo>) {
     let mut blocked = Vec::new();
     let mut to_execute = Vec::new();
@@ -281,7 +317,7 @@ fn partition_blocked(
             let msg = check
                 .recovery_message
                 .unwrap_or_else(|| "Blocked".to_string());
-            helpers::push_or_replace_warning(messages, &msg);
+            side_messages.push(msg.clone());
             blocked.push(ToolCallResult {
                 tool_use_id: tool.id.clone(),
                 content: msg,
@@ -376,10 +412,9 @@ fn check_stall_detection(
 async fn run_auto_build(
     config: &AgentLoopConfig,
     executor: &dyn AgentToolExecutor,
-    messages: &mut Vec<Message>,
     build_cooldown: &mut usize,
     build_baseline: Option<&BuildBaseline>,
-) {
+) -> Option<String> {
     if let Some(build_result) = executor.auto_build_check().await {
         *build_cooldown = config.auto_build_cooldown;
         if !build_result.success {
@@ -387,10 +422,11 @@ async fn run_auto_build(
                 || build_result.output.clone(),
                 |baseline| build::annotate_build_output(&build_result.output, baseline),
             );
-            messages.push(Message::user(format!(
+            return Some(format!(
                 "Build check failed with {} error(s):\n\n{annotated}",
                 build_result.error_count
-            )));
+            ));
         }
     }
+    None
 }
