@@ -1,5 +1,19 @@
 //! Error types for the Aura system.
 //!
+//! ## Error Strategy
+//!
+//! The workspace uses a layered error approach:
+//! - **Boundary crates** (`aura-store`, `aura-auth`, `aura-tools`, `aura-reasoner`) define
+//!   typed error enums (`StoreError`, `AuthError`, `ToolError`, `ReasonerError`) for their
+//!   specific failure modes.
+//! - **Orchestration layers** (`aura-kernel`, `aura-runtime`, `aura-agent`, CLI binaries)
+//!   use `anyhow::Result` for flexibility and error context chaining.
+//! - **`AuraError`** serves as the shared domain error type in `aura-core`, available for
+//!   cross-layer error propagation where typed errors are preferred over `anyhow`.
+//!
+//! Consumer code can downcast `anyhow::Error` to `ReasonerError` or `StoreError` when
+//! specific error handling is needed (e.g., retry on rate limit, sequence mismatch recovery).
+//!
 //! Uses `thiserror` for library errors with context preservation.
 
 use crate::ids::{ActionId, AgentId, TxId};
@@ -12,6 +26,9 @@ pub type Result<T> = std::result::Result<T, AuraError>;
 #[derive(Error, Debug)]
 pub enum AuraError {
     // === Storage Errors ===
+    /// NOTE: Storage-layer code uses `StoreError` (in aura-store) rather than these
+    /// variants. These are retained for potential use by higher layers that map
+    /// store errors into AuraError.
     #[error("storage error: {message}")]
     Storage {
         message: String,
@@ -19,18 +36,33 @@ pub enum AuraError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
+    /// NOTE: Storage-layer code uses `StoreError` (in aura-store) rather than these
+    /// variants. These are retained for potential use by higher layers that map
+    /// store errors into AuraError.
     #[error("agent not found: {agent_id}")]
     AgentNotFound { agent_id: AgentId },
 
+    /// NOTE: Storage-layer code uses `StoreError` (in aura-store) rather than these
+    /// variants. These are retained for potential use by higher layers that map
+    /// store errors into AuraError.
     #[error("record entry not found: agent={agent_id}, seq={seq}")]
     RecordEntryNotFound { agent_id: AgentId, seq: u64 },
 
+    /// NOTE: Storage-layer code uses `StoreError` (in aura-store) rather than these
+    /// variants. These are retained for potential use by higher layers that map
+    /// store errors into AuraError.
     #[error("transaction not found: {tx_id}")]
     TransactionNotFound { tx_id: TxId },
 
+    /// NOTE: Storage-layer code uses `StoreError` (in aura-store) rather than these
+    /// variants. These are retained for potential use by higher layers that map
+    /// store errors into AuraError.
     #[error("inbox empty for agent: {agent_id}")]
     InboxEmpty { agent_id: AgentId },
 
+    /// NOTE: Storage-layer code uses `StoreError` (in aura-store) rather than these
+    /// variants. These are retained for potential use by higher layers that map
+    /// store errors into AuraError.
     #[error("sequence mismatch: expected {expected}, got {actual}")]
     SequenceMismatch { expected: u64, actual: u64 },
 
@@ -215,9 +247,16 @@ impl AuraError {
 // Conversion from serde_json errors
 impl From<serde_json::Error> for AuraError {
     fn from(err: serde_json::Error) -> Self {
-        Self::Serialization {
-            message: err.to_string(),
-            source: Some(Box::new(err)),
+        use serde_json::error::Category;
+        match err.classify() {
+            Category::Io => Self::Serialization {
+                message: err.to_string(),
+                source: Some(Box::new(err)),
+            },
+            Category::Syntax | Category::Data | Category::Eof => Self::Deserialization {
+                message: err.to_string(),
+                source: Some(Box::new(err)),
+            },
         }
     }
 }
@@ -398,7 +437,7 @@ mod tests {
         let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
         let aura_err: AuraError = json_err.into();
 
-        assert!(matches!(aura_err, AuraError::Serialization { .. }));
+        assert!(matches!(aura_err, AuraError::Deserialization { .. }));
     }
 
     #[test]
@@ -541,11 +580,11 @@ mod tests {
         let err_msg = json_err.to_string();
         let aura_err: AuraError = json_err.into();
         match aura_err {
-            AuraError::Serialization { message, source } => {
+            AuraError::Deserialization { message, source } => {
                 assert_eq!(message, err_msg);
                 assert!(source.is_some());
             }
-            _ => panic!("Expected Serialization error"),
+            _ => panic!("Expected Deserialization error"),
         }
     }
 }

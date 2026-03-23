@@ -21,6 +21,10 @@ pub enum ReasonerError {
     InsufficientCredits(String),
 
     /// Any other provider-level failure (network, auth, bad request, …).
+    ///
+    /// NOTE: Currently unused in production — Anthropic provider maps non-rate-limit,
+    /// non-credit errors to plain `anyhow::Error`. Consider using this variant for
+    /// structured error handling in provider implementations.
     #[error("Provider error: {0}")]
     Provider(String),
 }
