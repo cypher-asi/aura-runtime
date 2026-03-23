@@ -266,7 +266,10 @@ fn start_turn(
     let mut tool_executor = ToolExecutor::new(ctx.tool_config.clone());
 
     let harness_tools = ctx.tool_installer.snapshot();
-    for tool_def in &harness_tools {
+    for mut tool_def in harness_tools {
+        if let Some(ref jwt) = session.auth_token {
+            tool_def.auth = aura_core::ToolAuth::Bearer { token: jwt.clone() };
+        }
         if let Err(e) = tool_executor.register_installed(tool_def.clone()) {
             tracing::warn!(tool = %tool_def.name, error = %e, "Failed to register harness tool");
         }

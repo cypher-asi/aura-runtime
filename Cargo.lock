@@ -333,6 +333,7 @@ dependencies = [
  "bytes",
  "dashmap 5.5.3",
  "futures-util",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
