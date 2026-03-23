@@ -75,54 +75,83 @@ fn fix_orphan_tool_results(messages: &mut Vec<Message>) {
     messages.retain(|msg| !msg.content.is_empty());
 }
 
-/// Pass 4: Inject synthetic error results for `tool_use` blocks that lack a `tool_result`.
+/// Pass 4: Ensure every assistant `tool_use` has a matching `tool_result`
+/// in the **immediately following** user message (Anthropic positional rule).
+///
+/// Injects synthetic error results for any missing pairings.
 fn fix_unpaired_tool_uses(messages: &mut Vec<Message>) {
-    let tool_result_ids: HashSet<String> = messages
-        .iter()
-        .flat_map(|msg| &msg.content)
-        .filter_map(|block| {
-            if let ContentBlock::ToolResult { tool_use_id, .. } = block {
-                Some(tool_use_id.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut i = 0;
+    while i < messages.len() {
+        if messages[i].role != Role::Assistant {
+            i += 1;
+            continue;
+        }
 
-    let unpaired: Vec<(String, usize)> = messages
-        .iter()
-        .enumerate()
-        .flat_map(|(idx, msg)| {
-            let ids_ref = &tool_result_ids;
-            msg.content.iter().filter_map(move |block| {
-                if let ContentBlock::ToolUse { id, .. } = block {
-                    if ids_ref.contains(id) {
-                        None
-                    } else {
-                        Some((id.clone(), idx))
-                    }
+        let tool_use_ids: Vec<String> = messages[i]
+            .content
+            .iter()
+            .filter_map(|b| {
+                if let ContentBlock::ToolUse { id, .. } = b {
+                    Some(id.clone())
                 } else {
                     None
                 }
             })
-        })
-        .collect();
+            .collect();
 
-    for (id, msg_idx) in unpaired {
-        let synthetic = ContentBlock::tool_result(
-            id.as_str(),
-            ToolResultContent::text("[Tool result was lost during context compaction]"),
-            true,
-        );
-
-        let insert_idx = msg_idx + 1;
-        if insert_idx < messages.len() && messages[insert_idx].role == Role::User {
-            messages[insert_idx].content.insert(0, synthetic);
-        } else {
-            let new_msg = Message::new(Role::User, vec![synthetic]);
-            let pos = (msg_idx + 1).min(messages.len());
-            messages.insert(pos, new_msg);
+        if tool_use_ids.is_empty() {
+            i += 1;
+            continue;
         }
+
+        let existing_result_ids: HashSet<String> = messages
+            .get(i + 1)
+            .filter(|m| m.role == Role::User)
+            .map(|m| {
+                m.content
+                    .iter()
+                    .filter_map(|b| {
+                        if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                            Some(tool_use_id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let missing: Vec<String> = tool_use_ids
+            .into_iter()
+            .filter(|id| !existing_result_ids.contains(id))
+            .collect();
+
+        if !missing.is_empty() {
+            let synthetic: Vec<ContentBlock> = missing
+                .into_iter()
+                .map(|id| {
+                    ContentBlock::tool_result(
+                        &id,
+                        ToolResultContent::text(
+                            "[Tool result was lost during context compaction]",
+                        ),
+                        true,
+                    )
+                })
+                .collect();
+
+            if i + 1 < messages.len() && messages[i + 1].role == Role::User {
+                let insert_pos = messages[i + 1].content.len();
+                for (offset, block) in synthetic.into_iter().enumerate() {
+                    messages[i + 1].content.insert(offset, block);
+                }
+                let _ = insert_pos;
+            } else {
+                messages.insert(i + 1, Message::new(Role::User, synthetic));
+            }
+        }
+
+        i += 1;
     }
 }
 
