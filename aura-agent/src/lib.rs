@@ -37,6 +37,7 @@ pub mod compaction;
 mod constants;
 pub mod file_ops;
 pub mod planning;
+pub mod prompts;
 pub mod events;
 mod helpers;
 mod kernel_executor;
@@ -47,6 +48,7 @@ pub mod parser;
 pub mod self_review;
 pub mod shell_parse;
 pub mod types;
+pub mod verify;
 
 pub use agent_loop::{AgentLoop, AgentLoopConfig};
 pub use aura_kernel::ModelCallDelegate;
