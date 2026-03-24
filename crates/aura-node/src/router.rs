@@ -7,6 +7,7 @@ use crate::session::{handle_ws_connection, WsContext};
 use aura_core::{AgentId, Transaction, TransactionType};
 use aura_reasoner::ModelProvider;
 use aura_store::Store;
+use aura_tools::domain_tools::DomainToolExecutor;
 use aura_tools::{ToolCatalog, ToolConfig};
 use axum::{
     extract::{ws::WebSocketUpgrade, Path, Query, State},
@@ -32,6 +33,8 @@ pub struct RouterState {
     pub tool_config: ToolConfig,
     /// Canonical tool catalog (shared across sessions).
     pub catalog: Arc<ToolCatalog>,
+    /// Domain tool executor for specs/tasks/project (None if no internal token).
+    pub domain_executor: Option<Arc<DomainToolExecutor>>,
 }
 
 impl Clone for RouterState {
@@ -43,6 +46,7 @@ impl Clone for RouterState {
             provider: self.provider.clone(),
             tool_config: self.tool_config.clone(),
             catalog: self.catalog.clone(),
+            domain_executor: self.domain_executor.clone(),
         }
     }
 }
@@ -291,6 +295,7 @@ async fn ws_upgrade_handler(
         tool_config: state.tool_config.clone(),
         auth_token,
         catalog: state.catalog.clone(),
+        domain_executor: state.domain_executor.clone(),
     };
     ws.on_upgrade(move |socket| handle_ws_connection(socket, ctx))
 }
@@ -322,6 +327,7 @@ mod tests {
             provider,
             tool_config: ToolConfig::default(),
             catalog: Arc::new(ToolCatalog::new()),
+            domain_executor: None,
         }
     }
 

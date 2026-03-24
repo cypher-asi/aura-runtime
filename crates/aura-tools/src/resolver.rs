@@ -7,6 +7,7 @@
 
 use crate::catalog::ToolCatalog;
 use crate::catalog::ToolProfile;
+use crate::domain_tools::DomainToolExecutor;
 use crate::error::ToolError;
 use crate::installed::InstalledTool;
 use crate::sandbox::Sandbox;
@@ -31,6 +32,7 @@ use tracing::{debug, error, instrument};
 pub struct ToolResolver {
     catalog: Arc<ToolCatalog>,
     tools: HashMap<String, Box<dyn Tool>>,
+    domain_executor: Option<Arc<DomainToolExecutor>>,
     config: ToolConfig,
 }
 
@@ -45,8 +47,16 @@ impl ToolResolver {
         Self {
             catalog,
             tools,
+            domain_executor: None,
             config,
         }
+    }
+
+    /// Attach a domain tool executor for specs/tasks/project dispatch.
+    #[must_use]
+    pub fn with_domain_executor(mut self, exec: Arc<DomainToolExecutor>) -> Self {
+        self.domain_executor = Some(exec);
+        self
     }
 
     /// Visible tools for a profile (delegates to the catalog + config).
@@ -113,7 +123,20 @@ impl ToolResolver {
             return tool.execute(&tool_ctx, tool_call.args.clone()).await;
         }
 
-        // 2. HTTP fallback from catalog
+        // 2. Domain tools (specs, tasks, project)
+        if let Some(ref domain) = self.domain_executor {
+            if domain.handles(tool_name) {
+                let project_id = tool_call.args["project_id"]
+                    .as_str()
+                    .unwrap_or_default();
+                let result_json = domain
+                    .execute(tool_name, project_id, &tool_call.args)
+                    .await;
+                return Ok(ToolResult::success(tool_name, result_json));
+            }
+        }
+
+        // 3. HTTP fallback from catalog
         if let Some(def) = self.catalog.get_installed(tool_name) {
             debug!(tool = %tool_name, "Falling back to HTTP-installed handler");
             let installed = InstalledTool::new(def)?;

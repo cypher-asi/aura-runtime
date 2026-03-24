@@ -199,8 +199,12 @@ fn handle_session_init(
         return;
     }
 
-    session.tool_definitions =
-        ctx.catalog.visible_tools(ToolProfile::Agent, &ctx.tool_config);
+    let profile = if ctx.domain_executor.is_some() {
+        ToolProfile::Agent
+    } else {
+        ToolProfile::Core
+    };
+    session.tool_definitions = ctx.catalog.visible_tools(profile, &ctx.tool_config);
 
     for tool in &session.installed_tools {
         session
@@ -261,6 +265,9 @@ fn start_turn(
     session.messages.push(Message::user(&msg.content));
 
     let mut resolver = ToolResolver::new(ctx.catalog.clone(), ctx.tool_config.clone());
+    if let Some(ref de) = ctx.domain_executor {
+        resolver = resolver.with_domain_executor(de.clone());
+    }
 
     for mut tool_def in ctx.catalog.installed_snapshot() {
         if let Some(ref jwt) = session.auth_token {

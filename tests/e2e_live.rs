@@ -158,6 +158,7 @@ impl TestServer {
             provider,
             tool_config,
             catalog,
+            domain_executor: None,
         };
         let app = create_router(state);
 

@@ -11,6 +11,7 @@ use crate::protocol::{self, SessionInit};
 use aura_agent::{prompts::default_system_prompt, AgentLoopConfig};
 use aura_core::{AgentId, InstalledToolDefinition};
 use aura_reasoner::{Message, ModelProvider, ToolDefinition};
+use aura_tools::domain_tools::DomainToolExecutor;
 use aura_tools::{ToolCatalog, ToolConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -180,4 +181,6 @@ pub struct WsContext {
     pub auth_token: Option<String>,
     /// Canonical tool catalog (shared across sessions).
     pub catalog: Arc<ToolCatalog>,
+    /// Domain tool executor for specs/tasks/project.
+    pub domain_executor: Option<Arc<DomainToolExecutor>>,
 }

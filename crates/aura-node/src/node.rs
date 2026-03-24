@@ -1,12 +1,14 @@
 //! Node runtime.
 
 use crate::config::NodeConfig;
+use crate::domain::HttpDomainApi;
 use crate::router::{create_router, RouterState};
 use crate::scheduler::Scheduler;
 use aura_executor::Executor;
 use aura_reasoner::{AnthropicConfig, AnthropicProvider, MockProvider, ModelProvider};
 use aura_store::RocksStore;
 use aura_tools::catalog::ToolProfile;
+use aura_tools::domain_tools::DomainToolExecutor;
 use aura_tools::{ToolCatalog, ToolConfig, ToolResolver};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -67,9 +69,26 @@ impl Node {
         }
         info!(installed = catalog.installed_count(), static_tools = catalog.static_count(), "Tool catalog ready");
 
+        let domain_executor = self.config.internal_service_token.as_ref().map(|token| {
+            let api = HttpDomainApi::new(
+                &self.config.aura_storage_url,
+                &self.config.aura_network_url,
+                token,
+            );
+            Arc::new(DomainToolExecutor::new(Arc::new(api)))
+        });
+        if domain_executor.is_some() {
+            info!("Domain tool executor ready (internal token auth)");
+        } else {
+            warn!("No INTERNAL_SERVICE_TOKEN — domain tools (specs/tasks/project) will be unavailable");
+        }
+
         let tools = catalog.visible_tools(ToolProfile::Core, &tool_config);
-        let resolver: Arc<dyn Executor> =
-            Arc::new(ToolResolver::new(catalog.clone(), tool_config.clone()));
+        let mut resolver = ToolResolver::new(catalog.clone(), tool_config.clone());
+        if let Some(ref de) = domain_executor {
+            resolver = resolver.with_domain_executor(de.clone());
+        }
+        let resolver: Arc<dyn Executor> = Arc::new(resolver);
         let executors = vec![resolver];
         info!("Executors configured");
 
@@ -91,6 +110,7 @@ impl Node {
             provider,
             tool_config,
             catalog,
+            domain_executor,
         };
         let app = create_router(state);
 

@@ -24,6 +24,7 @@
 
 pub mod api;
 mod config;
+pub mod domain;
 mod node;
 pub mod protocol;
 pub mod router;
