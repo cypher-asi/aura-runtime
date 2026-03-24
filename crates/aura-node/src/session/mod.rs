@@ -45,10 +45,13 @@ pub struct Session {
     pub cumulative_input_tokens: u64,
     /// Cumulative output tokens across all turns.
     pub cumulative_output_tokens: u64,
-    /// Workspace directory for this session.
+    /// Workspace directory for this session (sandboxed fallback).
     pub workspace: PathBuf,
     /// Base directory that workspace must reside under.
     workspace_base: PathBuf,
+    /// Real project directory on the host filesystem.
+    /// When set, tool execution uses this path directly.
+    pub project_path: Option<PathBuf>,
     /// Whether `session_init` has been received.
     pub initialized: bool,
     /// Available tool definitions (builtin + external).
@@ -78,6 +81,7 @@ impl Session {
             cumulative_output_tokens: 0,
             workspace: default_workspace.clone(),
             workspace_base: default_workspace,
+            project_path: None,
             initialized: false,
             tool_definitions: Vec::new(),
             context_window_tokens: 200_000,
@@ -127,6 +131,19 @@ impl Session {
             }
             self.workspace = candidate;
         }
+        if let Some(ref pp) = init.project_path {
+            let candidate = PathBuf::from(pp);
+            if !candidate.is_absolute() {
+                return Err("project_path must be an absolute path".into());
+            }
+            if candidate
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err("project_path must not contain '..' components".into());
+            }
+            self.project_path = Some(candidate);
+        }
         if let Some(token) = init.token {
             self.auth_token = Some(token);
         }
@@ -148,14 +165,27 @@ impl Session {
 
     /// Build an `AgentLoopConfig` from session state.
     pub(super) fn agent_loop_config(&self) -> AgentLoopConfig {
+        let base_prompt = if self.system_prompt.is_empty() {
+            default_system_prompt()
+        } else {
+            self.system_prompt.clone()
+        };
+
+        let system_prompt = if let Some(ref pp) = self.project_path {
+            format!(
+                "{base_prompt}\n\n## Workspace\n\n\
+                 Your workspace root is `{}`. All relative file paths are resolved against this directory. \
+                 When referring to files, use paths relative to this root.",
+                pp.display()
+            )
+        } else {
+            base_prompt
+        };
+
         AgentLoopConfig {
             max_iterations: self.max_turns as usize,
             model: self.model.clone(),
-            system_prompt: if self.system_prompt.is_empty() {
-                default_system_prompt()
-            } else {
-                self.system_prompt.clone()
-            },
+            system_prompt,
             max_tokens: self.max_tokens,
             max_context_tokens: Some(self.context_window_tokens),
             auth_token: self.auth_token.clone(),

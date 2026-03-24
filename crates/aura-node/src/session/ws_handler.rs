@@ -279,7 +279,10 @@ fn start_turn(
     let mut executor_router = ExecutorRouter::new();
     executor_router.add_executor(Arc::new(resolver));
 
-    let workspace = session.workspace.join(session.agent_id.to_hex());
+    let workspace = match session.project_path {
+        Some(ref pp) => pp.clone(),
+        None => session.workspace.join(session.agent_id.to_hex()),
+    };
     let kernel_executor = KernelToolExecutor::new(executor_router, session.agent_id, workspace);
 
     let config = session.agent_loop_config();

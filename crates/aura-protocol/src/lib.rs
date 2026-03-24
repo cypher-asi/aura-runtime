@@ -60,9 +60,14 @@ pub struct SessionInit {
     /// Installed tools to register for this session.
     #[serde(default)]
     pub installed_tools: Option<Vec<InstalledTool>>,
-    /// Workspace directory path.
+    /// Workspace directory path (must be under the server's workspace base).
     #[serde(default)]
     pub workspace: Option<String>,
+    /// Absolute path to the real project directory on the host filesystem.
+    /// When set, tool execution happens directly in this directory instead of
+    /// the sandboxed `aura_data/workspaces/` tree.
+    #[serde(default)]
+    pub project_path: Option<String>,
     /// JWT auth token for proxy routing.
     #[serde(default)]
     pub token: Option<String>,
