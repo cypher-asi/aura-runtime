@@ -200,8 +200,7 @@ fn handle_session_init(
     }
 
     session.tool_definitions =
-        ctx.catalog
-            .visible_tools(ToolProfile::Core, &ctx.tool_config);
+        ctx.catalog.visible_tools(ToolProfile::Agent, &ctx.tool_config);
 
     for tool in &session.installed_tools {
         session
@@ -268,7 +267,7 @@ fn start_turn(
             tool_def.auth = aura_core::ToolAuth::Bearer { token: jwt.clone() };
         }
         if let Err(e) = resolver.register_installed(tool_def.clone()) {
-            tracing::warn!(tool = %tool_def.name, error = %e, "Failed to register harness tool");
+            tracing::warn!(tool = %tool_def.name, error = %e, "Failed to register installed tool");
         }
     }
 
@@ -277,6 +276,7 @@ fn start_turn(
             tracing::warn!(tool = %tool.name, error = %e, "Failed to register installed tool");
         }
     }
+
     let mut executor_router = ExecutorRouter::new();
     executor_router.add_executor(Arc::new(resolver));
 
