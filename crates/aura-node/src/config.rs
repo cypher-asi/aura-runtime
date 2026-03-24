@@ -100,7 +100,9 @@ impl NodeConfig {
             config.aura_network_url = val;
         }
         if let Ok(val) = std::env::var("INTERNAL_SERVICE_TOKEN") {
-            config.internal_service_token = Some(val);
+            if !val.trim().is_empty() {
+                config.internal_service_token = Some(val);
+            }
         }
 
         config
