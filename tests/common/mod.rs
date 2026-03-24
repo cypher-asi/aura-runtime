@@ -25,61 +25,56 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message as WsMsg;
 
 // ============================================================================
-// Skip helpers
+// Credential helpers (hard-fail when missing)
 // ============================================================================
 
-/// Resolve auth token for LLM tests. Returns None when unavailable.
-pub fn require_llm_token() -> Option<String> {
+/// Resolve auth token for LLM tests. Panics when credentials are missing.
+pub fn require_llm_token() -> String {
     let routing = std::env::var("AURA_LLM_ROUTING").unwrap_or_default();
     if routing == "direct" {
         if std::env::var("AURA_ANTHROPIC_API_KEY").is_err()
             && std::env::var("ANTHROPIC_API_KEY").is_err()
         {
-            eprintln!("SKIP: direct mode but no API key set");
-            return None;
+            panic!(
+                "LLM credentials required: AURA_LLM_ROUTING=direct but neither \
+                 AURA_ANTHROPIC_API_KEY nor ANTHROPIC_API_KEY is set"
+            );
         }
-        return Some(String::new());
+        return String::new();
     }
-    match load_auth_token() {
-        Some(t) => Some(t),
-        None => {
-            eprintln!("SKIP: no auth token available for LLM proxy mode");
-            None
-        }
-    }
+    load_auth_token().unwrap_or_else(|| {
+        panic!(
+            "LLM credentials required: no auth token available. \
+             Set AURA_ROUTER_JWT, run `aura login`, or set \
+             AURA_LLM_ROUTING=direct with an API key."
+        )
+    })
 }
 
 #[macro_export]
 macro_rules! require_llm {
     () => {
-        match $crate::common::require_llm_token() {
-            Some(t) => t,
-            None => return,
-        }
+        $crate::common::require_llm_token()
     };
 }
 
-/// Return (email, password) from E2E env vars, or None if not set.
-pub fn require_zos_credentials() -> Option<(String, String)> {
-    let email = std::env::var("E2E_ZOS_EMAIL").ok()?;
-    let password = std::env::var("E2E_ZOS_PASSWORD").ok()?;
+/// Return (email, password) from E2E env vars. Panics when missing.
+pub fn require_zos_credentials() -> (String, String) {
+    let email = std::env::var("E2E_ZOS_EMAIL").unwrap_or_default();
+    let password = std::env::var("E2E_ZOS_PASSWORD").unwrap_or_default();
     if email.is_empty() || password.is_empty() {
-        eprintln!("SKIP: E2E_ZOS_EMAIL / E2E_ZOS_PASSWORD not set");
-        return None;
+        panic!(
+            "ZOS credentials required: set E2E_ZOS_EMAIL and E2E_ZOS_PASSWORD \
+             environment variables (or add them to .env)"
+        );
     }
-    Some((email, password))
+    (email, password)
 }
 
 #[macro_export]
 macro_rules! require_zos {
     () => {
-        match $crate::common::require_zos_credentials() {
-            Some(creds) => creds,
-            None => {
-                eprintln!("SKIP: ZOS credentials not configured");
-                return;
-            }
-        }
+        $crate::common::require_zos_credentials()
     };
 }
 

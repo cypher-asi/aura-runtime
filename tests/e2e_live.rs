@@ -820,10 +820,7 @@ async fn test_ws_session_init_with_max_turns() {
 async fn test_ws_auth_bearer_header() {
     let _ = dotenvy::dotenv();
     let token = require_llm!();
-    if token.is_empty() {
-        eprintln!("SKIP: bearer header test needs a non-empty token");
-        return;
-    }
+    assert!(!token.is_empty(), "bearer header test requires a non-empty token");
     let server = TestServer::start().await;
     let ws_path = server.workspaces_path().join("bearer-header");
     std::fs::create_dir_all(&ws_path).unwrap();
