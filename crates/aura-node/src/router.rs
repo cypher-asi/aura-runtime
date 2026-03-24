@@ -6,6 +6,7 @@ use crate::session::{handle_ws_connection, WsContext};
 use aura_core::{AgentId, Transaction, TransactionType};
 use aura_reasoner::ModelProvider;
 use aura_store::Store;
+use aura_tools::automaton_tools::AutomatonController;
 use aura_tools::domain_tools::DomainApi;
 use aura_tools::{ToolCatalog, ToolConfig};
 use axum::{
@@ -34,6 +35,8 @@ pub struct RouterState {
     pub catalog: Arc<ToolCatalog>,
     /// Domain API for specs/tasks/project/orbit/network (None if no internal token).
     pub domain_api: Option<Arc<dyn DomainApi>>,
+    /// Automaton controller for dev-loop lifecycle (None when domain API unavailable).
+    pub automaton_controller: Option<Arc<dyn AutomatonController>>,
 }
 
 impl Clone for RouterState {
@@ -46,6 +49,7 @@ impl Clone for RouterState {
             tool_config: self.tool_config.clone(),
             catalog: self.catalog.clone(),
             domain_api: self.domain_api.clone(),
+            automaton_controller: self.automaton_controller.clone(),
         }
     }
 }
@@ -241,6 +245,7 @@ async fn ws_upgrade_handler(
         auth_token,
         catalog: state.catalog.clone(),
         domain_api: state.domain_api.clone(),
+        automaton_controller: state.automaton_controller.clone(),
     };
     ws.on_upgrade(move |socket| handle_ws_connection(socket, ctx))
 }
@@ -273,6 +278,7 @@ mod tests {
             tool_config: ToolConfig::default(),
             catalog: Arc::new(ToolCatalog::new()),
             domain_api: None,
+            automaton_controller: None,
         }
     }
 

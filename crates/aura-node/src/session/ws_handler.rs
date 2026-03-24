@@ -272,9 +272,17 @@ fn start_turn(
         resolver = resolver.with_domain_executor(domain_exec);
     }
 
-    // Session-init installed_tools are visible to the model (added to
-    // tool_definitions during init) but execution is handled by the domain
-    // executor for all known domain tools.
+    if let Some(ref controller) = ctx.automaton_controller {
+        let project_id = session.project_id.clone().unwrap_or_default();
+        let workspace_root = session.project_path.clone();
+        for tool in aura_tools::automaton_tools::devloop_control_tools(
+            controller.clone(),
+            project_id,
+            workspace_root,
+        ) {
+            resolver.register(tool);
+        }
+    }
 
     let mut executor_router = ExecutorRouter::new();
     executor_router.add_executor(Arc::new(resolver));

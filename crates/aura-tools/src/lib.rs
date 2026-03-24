@@ -24,6 +24,7 @@
     clippy::doc_markdown
 )]
 
+pub mod automaton_tools;
 pub mod catalog;
 pub mod definitions;
 pub mod domain_tools;

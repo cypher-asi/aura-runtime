@@ -327,6 +327,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aura-agent",
+ "aura-automaton",
  "aura-core",
  "aura-executor",
  "aura-kernel",

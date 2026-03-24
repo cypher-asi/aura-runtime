@@ -11,6 +11,7 @@ use crate::protocol::{self, SessionInit};
 use aura_agent::{prompts::default_system_prompt, AgentLoopConfig};
 use aura_core::{AgentId, InstalledToolDefinition};
 use aura_reasoner::{Message, ModelProvider, ToolDefinition};
+use aura_tools::automaton_tools::AutomatonController;
 use aura_tools::domain_tools::DomainApi;
 use aura_tools::{ToolCatalog, ToolConfig};
 use std::path::PathBuf;
@@ -228,4 +229,6 @@ pub struct WsContext {
     pub catalog: Arc<ToolCatalog>,
     /// Domain API for native spec/task/project/orbit/network tool execution.
     pub domain_api: Option<Arc<dyn DomainApi>>,
+    /// Automaton controller for dev-loop lifecycle (None when domain API unavailable).
+    pub automaton_controller: Option<Arc<dyn AutomatonController>>,
 }

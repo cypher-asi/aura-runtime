@@ -1,12 +1,15 @@
 //! Node runtime.
 
+use crate::automaton_bridge::AutomatonBridge;
 use crate::config::NodeConfig;
 use crate::domain::HttpDomainApi;
 use crate::router::{create_router, RouterState};
 use crate::scheduler::Scheduler;
+use aura_automaton::AutomatonRuntime;
 use aura_executor::Executor;
 use aura_reasoner::{AnthropicConfig, AnthropicProvider, MockProvider, ModelProvider};
 use aura_store::RocksStore;
+use aura_tools::automaton_tools::AutomatonController;
 use aura_tools::catalog::ToolProfile;
 use aura_tools::domain_tools::{DomainApi, DomainToolExecutor};
 use aura_tools::{ToolCatalog, ToolConfig, ToolResolver};
@@ -103,6 +106,20 @@ impl Node {
         ));
         info!("Scheduler ready");
 
+        let automaton_runtime = Arc::new(AutomatonRuntime::new());
+        let automaton_controller: Option<Arc<dyn AutomatonController>> =
+            domain_api.as_ref().map(|api| {
+                Arc::new(AutomatonBridge::new(
+                    automaton_runtime.clone(),
+                    api.clone(),
+                    provider.clone(),
+                    catalog.clone(),
+                )) as Arc<dyn AutomatonController>
+            });
+        if automaton_controller.is_some() {
+            info!("Automaton runtime ready");
+        }
+
         let state = RouterState {
             store,
             scheduler,
@@ -111,6 +128,7 @@ impl Node {
             tool_config,
             catalog,
             domain_api,
+            automaton_controller,
         };
         let app = create_router(state);
 

@@ -22,6 +22,7 @@
     clippy::unnecessary_map_or
 )]
 
+pub mod automaton_bridge;
 mod config;
 pub mod domain;
 mod node;
