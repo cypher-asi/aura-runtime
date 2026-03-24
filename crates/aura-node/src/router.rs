@@ -1,19 +1,18 @@
 //! HTTP and WebSocket router for the node API.
 
-use crate::api;
 use crate::config::NodeConfig;
 use crate::scheduler::Scheduler;
 use crate::session::{handle_ws_connection, WsContext};
 use aura_core::{AgentId, Transaction, TransactionType};
 use aura_reasoner::ModelProvider;
 use aura_store::Store;
-use aura_tools::domain_tools::DomainToolExecutor;
+use aura_tools::domain_tools::DomainApi;
 use aura_tools::{ToolCatalog, ToolConfig};
 use axum::{
     extract::{ws::WebSocketUpgrade, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{delete, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use bytes::Bytes;
@@ -33,8 +32,8 @@ pub struct RouterState {
     pub tool_config: ToolConfig,
     /// Canonical tool catalog (shared across sessions).
     pub catalog: Arc<ToolCatalog>,
-    /// Domain tool executor for specs/tasks/project (None if no internal token).
-    pub domain_executor: Option<Arc<DomainToolExecutor>>,
+    /// Domain API for specs/tasks/project/orbit/network (None if no internal token).
+    pub domain_api: Option<Arc<dyn DomainApi>>,
 }
 
 impl Clone for RouterState {
@@ -46,65 +45,13 @@ impl Clone for RouterState {
             provider: self.provider.clone(),
             tool_config: self.tool_config.clone(),
             catalog: self.catalog.clone(),
-            domain_executor: self.domain_executor.clone(),
+            domain_api: self.domain_api.clone(),
         }
     }
 }
 
 /// Create the router.
 pub fn create_router(state: RouterState) -> Router {
-    let tool_routes = Router::new()
-        .route("/tools/install", post(api::install_tool_handler))
-        .route("/tools/:name", delete(api::delete_tool_handler))
-        .route("/tools", get(api::get_tools_handler))
-        .with_state(state.catalog.clone());
-
-    let service_clients = Arc::new(api::ServiceClients {
-        http: reqwest::Client::new(),
-        orbit_url: state.config.orbit_url.clone(),
-        aura_storage_url: state.config.aura_storage_url.clone(),
-        aura_network_url: state.config.aura_network_url.clone(),
-        internal_token: state.config.internal_service_token.clone(),
-    });
-
-    let proxy_ctx = api::ProxyContext {
-        clients: service_clients,
-        session_jwt: None,
-    };
-
-    let proxy_routes = Router::new()
-        // Orbit (10)
-        .route("/api/orbit/push", post(api::orbit::orbit_push))
-        .route("/api/orbit/create_repo", post(api::orbit::orbit_create_repo))
-        .route("/api/orbit/list_repos", post(api::orbit::orbit_list_repos))
-        .route("/api/orbit/list_branches", post(api::orbit::orbit_list_branches))
-        .route("/api/orbit/create_branch", post(api::orbit::orbit_create_branch))
-        .route("/api/orbit/list_commits", post(api::orbit::orbit_list_commits))
-        .route("/api/orbit/get_diff", post(api::orbit::orbit_get_diff))
-        .route("/api/orbit/create_pr", post(api::orbit::orbit_create_pr))
-        .route("/api/orbit/list_prs", post(api::orbit::orbit_list_prs))
-        .route("/api/orbit/merge_pr", post(api::orbit::orbit_merge_pr))
-        // Storage (12)
-        .route("/api/storage/create_task", post(api::storage::create_task))
-        .route("/api/storage/list_tasks", post(api::storage::list_tasks))
-        .route("/api/storage/get_task", post(api::storage::get_task))
-        .route("/api/storage/update_task", post(api::storage::update_task))
-        .route("/api/storage/transition_task", post(api::storage::transition_task))
-        .route("/api/storage/create_spec", post(api::storage::create_spec))
-        .route("/api/storage/list_specs", post(api::storage::list_specs))
-        .route("/api/storage/get_spec", post(api::storage::get_spec))
-        .route("/api/storage/update_spec", post(api::storage::update_spec))
-        .route("/api/storage/create_log", post(api::storage::create_log))
-        .route("/api/storage/list_logs", post(api::storage::list_logs))
-        .route("/api/storage/get_project_stats", post(api::storage::get_project_stats))
-        // Network (5)
-        .route("/api/network/post_to_feed", post(api::network::post_to_feed))
-        .route("/api/network/list_projects", post(api::network::list_projects))
-        .route("/api/network/get_project", post(api::network::get_project))
-        .route("/api/network/check_budget", post(api::network::check_budget))
-        .route("/api/network/record_usage", post(api::network::record_usage))
-        .with_state(proxy_ctx);
-
     Router::new()
         .route("/health", get(health_handler))
         .route("/tx", post(submit_tx_handler))
@@ -112,8 +59,6 @@ pub fn create_router(state: RouterState) -> Router {
         .route("/agents/:agent_id/record", get(scan_record_handler))
         .route("/stream", get(ws_upgrade_handler))
         .with_state(state)
-        .merge(tool_routes)
-        .merge(proxy_routes)
         .layer(TraceLayer::new_for_http())
 }
 
@@ -295,7 +240,7 @@ async fn ws_upgrade_handler(
         tool_config: state.tool_config.clone(),
         auth_token,
         catalog: state.catalog.clone(),
-        domain_executor: state.domain_executor.clone(),
+        domain_api: state.domain_api.clone(),
     };
     ws.on_upgrade(move |socket| handle_ws_connection(socket, ctx))
 }
@@ -327,7 +272,7 @@ mod tests {
             provider,
             tool_config: ToolConfig::default(),
             catalog: Arc::new(ToolCatalog::new()),
-            domain_executor: None,
+            domain_api: None,
         }
     }
 

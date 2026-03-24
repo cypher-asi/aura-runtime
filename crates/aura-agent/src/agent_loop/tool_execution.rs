@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use aura_core::{tool_result_cache_key, CACHEABLE_TOOLS};
 use aura_reasoner::{ContentBlock, Message, ModelResponse, ToolResultContent};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::blocking::detection::{detect_all_blocked, BlockingContext};
 use crate::blocking::stall::StallDetector;
@@ -41,8 +41,29 @@ pub(super) async fn handle_tool_use(
     if tool_calls.is_empty() {
         return true;
     }
+    info!(
+        tool_count = tool_calls.len(),
+        "Processing tool_use stop reason"
+    );
+    for tc in &tool_calls {
+        info!(
+            tool_use_id = %tc.id,
+            tool_name = %tc.name,
+            is_write = helpers::is_write_tool(&tc.name),
+            "Tool requested by model"
+        );
+    }
 
     let (cached_results, uncached_calls) = split_cached(&tool_calls, &state.tool_cache);
+    let cached_ids: HashSet<String> = cached_results
+        .iter()
+        .map(|r| r.tool_use_id.clone())
+        .collect();
+    info!(
+        cached_count = cached_results.len(),
+        execute_count = uncached_calls.len(),
+        "Resolved cached vs executable tool calls"
+    );
 
     let (executed_results, side_messages, is_stalled) = if uncached_calls.is_empty() {
         (Vec::new(), Vec::new(), false)
@@ -56,6 +77,27 @@ pub(super) async fn handle_tool_use(
 
     let mut all_results: Vec<ToolCallResult> = cached_results;
     all_results.extend(executed_results);
+    for r in &all_results {
+        let tool_name = tool_calls
+            .iter()
+            .find(|t| t.id == r.tool_use_id)
+            .map_or("unknown", |t| t.name.as_str());
+        let source = if cached_ids.contains(&r.tool_use_id) {
+            "cache"
+        } else {
+            "executor"
+        };
+        info!(
+            tool_use_id = %r.tool_use_id,
+            tool_name = tool_name,
+            is_write = helpers::is_write_tool(tool_name),
+            is_error = r.is_error,
+            stop_loop = r.stop_loop,
+            source = source,
+            result_len = r.content.len(),
+            "Tool call completed"
+        );
+    }
     emit_tool_results(event_tx, &all_results, &tool_calls);
 
     let should_stop = all_results.iter().any(|r| r.stop_loop);
@@ -173,19 +215,18 @@ fn emit_tool_results(
     }
 }
 
-/// Build a single user message with optional context text blocks followed by
-/// tool_result blocks.  This keeps the tool_result in the message immediately
-/// after the assistant's tool_use, which is required by the Anthropic API.
+/// Build a single user message with tool_result blocks first, followed by any
+/// optional context text blocks.
+///
+/// Anthropic requires that every assistant `tool_use` is immediately paired by
+/// `tool_result` blocks in the next user message. Keeping tool results first
+/// avoids ambiguity from prepended warning/build text blocks.
 fn push_tool_result_message_with_context(
     messages: &mut Vec<Message>,
     results: Vec<ToolCallResult>,
     context_texts: Vec<String>,
 ) {
-    let mut blocks: Vec<ContentBlock> = context_texts
-        .into_iter()
-        .map(|text| ContentBlock::Text { text })
-        .collect();
-
+    let mut blocks: Vec<ContentBlock> = Vec::new();
     for r in results {
         blocks.push(ContentBlock::tool_result(
             &r.tool_use_id,
@@ -193,9 +234,54 @@ fn push_tool_result_message_with_context(
             r.is_error,
         ));
     }
+    for text in context_texts {
+        blocks.push(ContentBlock::Text { text });
+    }
 
     if !blocks.is_empty() {
         messages.push(Message::new(aura_reasoner::Role::User, blocks));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_results_are_emitted_before_context_texts() {
+        let mut messages = Vec::new();
+        let results = vec![
+            ToolCallResult {
+                tool_use_id: "tool_1".to_string(),
+                content: "ok 1".to_string(),
+                is_error: false,
+                stop_loop: false,
+            },
+            ToolCallResult {
+                tool_use_id: "tool_2".to_string(),
+                content: "ok 2".to_string(),
+                is_error: true,
+                stop_loop: false,
+            },
+        ];
+        let context = vec!["Build check failed".to_string()];
+
+        push_tool_result_message_with_context(&mut messages, results, context);
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, aura_reasoner::Role::User);
+        assert!(matches!(
+            messages[0].content.first(),
+            Some(ContentBlock::ToolResult { tool_use_id, .. }) if tool_use_id == "tool_1"
+        ));
+        assert!(matches!(
+            messages[0].content.get(1),
+            Some(ContentBlock::ToolResult { tool_use_id, .. }) if tool_use_id == "tool_2"
+        ));
+        assert!(matches!(
+            messages[0].content.get(2),
+            Some(ContentBlock::Text { text }) if text == "Build check failed"
+        ));
     }
 }
 

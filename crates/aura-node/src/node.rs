@@ -8,7 +8,7 @@ use aura_executor::Executor;
 use aura_reasoner::{AnthropicConfig, AnthropicProvider, MockProvider, ModelProvider};
 use aura_store::RocksStore;
 use aura_tools::catalog::ToolProfile;
-use aura_tools::domain_tools::DomainToolExecutor;
+use aura_tools::domain_tools::{DomainApi, DomainToolExecutor};
 use aura_tools::{ToolCatalog, ToolConfig, ToolResolver};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -57,45 +57,29 @@ impl Node {
             ..Default::default()
         };
 
-        // Ensure BIND_PORT is available for ${BIND_PORT} interpolation in tools.toml
-        // before loading the catalog. Derive it from BIND_ADDR if not already set.
-        if std::env::var("BIND_PORT").is_err() {
-            if let Some(port) = self.config.bind_addr.rsplit(':').next() {
-                std::env::set_var("BIND_PORT", port);
-            }
-        }
-
         let catalog = Arc::new(ToolCatalog::new());
-        if let Some(ref path) = self.config.tools_config_path {
-            let p = std::path::Path::new(path);
-            if p.exists() {
-                match catalog.load_from_file(p) {
-                    Ok(count) => info!(count, path, "Loaded tools from config"),
-                    Err(e) => warn!(error = %e, path, "Failed to load tools config"),
-                }
-            }
-        }
-        info!(installed = catalog.installed_count(), static_tools = catalog.static_count(), "Tool catalog ready");
+        info!(static_tools = catalog.static_count(), "Tool catalog ready");
 
-        let domain_executor = self.config.internal_service_token.as_ref().map(|token| {
-            let api = HttpDomainApi::new(
-                &self.config.aura_storage_url,
-                &self.config.aura_network_url,
-                &self.config.orbit_url,
-                token,
-            );
-            Arc::new(DomainToolExecutor::new(Arc::new(api)))
-        });
-        if domain_executor.is_some() {
-            info!("Domain tool executor ready (internal token auth)");
+        let domain_api: Option<Arc<dyn DomainApi>> =
+            self.config.internal_service_token.as_ref().map(|token| {
+                Arc::new(HttpDomainApi::new(
+                    &self.config.aura_storage_url,
+                    &self.config.aura_network_url,
+                    &self.config.orbit_url,
+                    token,
+                )) as Arc<dyn DomainApi>
+            });
+        if domain_api.is_some() {
+            info!("Domain API ready (internal token auth)");
         } else {
-            warn!("No INTERNAL_SERVICE_TOKEN — domain tools (specs/tasks/project) will be unavailable");
+            warn!("No INTERNAL_SERVICE_TOKEN — domain tools will be unavailable");
         }
 
         let tools = catalog.visible_tools(ToolProfile::Core, &tool_config);
         let mut resolver = ToolResolver::new(catalog.clone(), tool_config.clone());
-        if let Some(ref de) = domain_executor {
-            resolver = resolver.with_domain_executor(de.clone());
+        if let Some(ref api) = domain_api {
+            let domain_exec = Arc::new(DomainToolExecutor::new(api.clone()));
+            resolver = resolver.with_domain_executor(domain_exec);
         }
         let resolver: Arc<dyn Executor> = Arc::new(resolver);
         let executors = vec![resolver];
@@ -119,7 +103,7 @@ impl Node {
             provider,
             tool_config,
             catalog,
-            domain_executor,
+            domain_api,
         };
         let app = create_router(state);
 

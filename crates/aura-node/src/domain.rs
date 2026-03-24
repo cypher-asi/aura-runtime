@@ -216,6 +216,11 @@ impl DomainApi for HttpDomainApi {
         self.post(&url, &body).await
     }
 
+    async fn get_task(&self, task_id: &str) -> anyhow::Result<TaskDescriptor> {
+        let url = format!("{}/api/tasks/{task_id}", self.storage_url);
+        self.get(&url).await
+    }
+
     async fn claim_next_task(
         &self,
         project_id: &str,
@@ -260,6 +265,56 @@ impl DomainApi for HttpDomainApi {
             "testCommand": updates.test_command,
         });
         self.put(&url, &body).await
+    }
+
+    // -- Storage: logs & stats (aura-storage) -----------------------------------
+
+    async fn create_log(
+        &self,
+        project_id: &str,
+        message: &str,
+        level: &str,
+        agent_id: Option<&str>,
+        metadata: Option<&serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{}/api/projects/{project_id}/logs", self.storage_url);
+        let mut body = serde_json::json!({
+            "message": message,
+            "level": level,
+        });
+        if let Some(aid) = agent_id {
+            body["projectAgentId"] = serde_json::Value::String(aid.to_string());
+        }
+        if let Some(meta) = metadata {
+            body["metadata"] = meta.clone();
+        }
+        self.post(&url, &body).await
+    }
+
+    async fn list_logs(
+        &self,
+        project_id: &str,
+        level: Option<&str>,
+        limit: Option<u64>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut url = format!("{}/api/projects/{project_id}/logs", self.storage_url);
+        let mut params = Vec::new();
+        if let Some(l) = level {
+            params.push(format!("level={l}"));
+        }
+        if let Some(n) = limit {
+            params.push(format!("limit={n}"));
+        }
+        if !params.is_empty() {
+            url.push('?');
+            url.push_str(&params.join("&"));
+        }
+        self.get(&url).await
+    }
+
+    async fn get_project_stats(&self, project_id: &str) -> anyhow::Result<serde_json::Value> {
+        let url = format!("{}/api/projects/{project_id}/stats", self.storage_url);
+        self.get(&url).await
     }
 
     // -- Messages / Sessions (not used by WS sessions) ------------------------

@@ -1,23 +1,18 @@
 //! Tool resolver — unified dispatch layer for tool execution.
 //!
-//! The resolver owns the internal `Tool` implementations (built-in handlers)
-//! and falls back to HTTP-installed tools from the [`ToolCatalog`] when an
-//! internal handler is not found.  This implements the `internal_first`
-//! precedence policy described in the architecture plan.
+//! The resolver owns the internal `Tool` implementations (built-in handlers).
+//! Domain tools are delegated when a [`DomainToolExecutor`] is attached.
+//! Additional tools can be registered at runtime with [`ToolResolver::register`].
 
 use crate::catalog::ToolCatalog;
 use crate::catalog::ToolProfile;
 use crate::domain_tools::DomainToolExecutor;
 use crate::error::ToolError;
-use crate::installed::InstalledTool;
 use crate::sandbox::Sandbox;
 use crate::tool::{builtin_tools, Tool, ToolContext};
 use crate::ToolConfig;
 use async_trait::async_trait;
-use aura_core::{
-    Action, ActionKind, Effect, EffectKind, EffectStatus, InstalledToolDefinition, ToolCall,
-    ToolResult,
-};
+use aura_core::{Action, ActionKind, Effect, EffectKind, EffectStatus, ToolCall, ToolResult};
 use aura_executor::{ExecuteContext, Executor};
 use aura_reasoner::ToolDefinition;
 use bytes::Bytes;
@@ -70,21 +65,10 @@ impl ToolResolver {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
-    /// Register an installed tool for direct execution (e.g. session-scoped
-    /// tools that need an auth-token override).
-    ///
-    /// # Errors
-    /// Returns `ToolError` if the HTTP client cannot be built.
-    pub fn register_installed(&mut self, def: InstalledToolDefinition) -> Result<(), ToolError> {
-        let tool = InstalledTool::new(def)?;
-        self.tools.insert(tool.name().to_string(), Box::new(tool));
-        Ok(())
-    }
-
-    /// Execute a tool call with `internal_first` precedence:
-    /// 1. Check permission gates.
-    /// 2. Try the internal handler map.
-    /// 3. Fall back to HTTP-installed tool from the catalog.
+    /// Execute a tool call (after FS/command permission gates):
+    /// 1. Internal handler map (built-ins and [`register`](Self::register) tools).
+    /// 2. Domain executor when attached.
+    /// 3. [`ToolError::UnknownTool`] if nothing matches.
     #[instrument(skip(self, ctx), fields(tool = %tool_call.tool))]
     async fn execute_tool(
         &self,
@@ -134,13 +118,6 @@ impl ToolResolver {
                     .await;
                 return Ok(ToolResult::success(tool_name, result_json));
             }
-        }
-
-        // 3. HTTP fallback from catalog
-        if let Some(def) = self.catalog.get_installed(tool_name) {
-            debug!(tool = %tool_name, "Falling back to HTTP-installed handler");
-            let installed = InstalledTool::new(def)?;
-            return installed.execute(&tool_ctx, tool_call.args.clone()).await;
         }
 
         Err(ToolError::UnknownTool(tool_name.clone()))
@@ -218,7 +195,7 @@ impl Executor for ToolResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aura_core::{ActionId, AgentId, ToolAuth};
+    use aura_core::{ActionId, AgentId};
     use tempfile::TempDir;
 
     fn make_catalog_and_resolver() -> (Arc<ToolCatalog>, ToolResolver) {
@@ -291,56 +268,14 @@ mod tests {
     }
 
     #[test]
-    fn register_installed_adds_to_map() {
-        let (_cat, mut resolver) = make_catalog_and_resolver();
-        assert!(!resolver.tools.contains_key("my_http_tool"));
-
-        resolver
-            .register_installed(InstalledToolDefinition {
-                name: "my_http_tool".into(),
-                description: "test".into(),
-                input_schema: serde_json::json!({"type": "object"}),
-                endpoint: "http://localhost:9999/tool".into(),
-                auth: ToolAuth::None,
-                timeout_ms: None,
-                namespace: None,
-                metadata: Default::default(),
-            })
-            .unwrap();
-        assert!(resolver.tools.contains_key("my_http_tool"));
-    }
-
-    #[test]
     fn every_exposed_core_tool_has_handler() {
-        let (cat, resolver) = make_catalog_and_resolver();
-        let core = cat.tools_for_profile(ToolProfile::Core);
+        let (_cat, resolver) = make_catalog_and_resolver();
+        let core = _cat.tools_for_profile(ToolProfile::Core);
         for t in &core {
             let has_handler = resolver.tools.contains_key(t.name.as_str());
-            let is_domain = [
-                "list_specs",
-                "get_spec",
-                "create_spec",
-                "update_spec",
-                "delete_spec",
-                "list_tasks",
-                "create_task",
-                "update_task",
-                "delete_task",
-                "transition_task",
-                "run_task",
-                "get_project",
-                "update_project",
-                "start_dev_loop",
-                "pause_dev_loop",
-                "stop_dev_loop",
-                "task_done",
-                "get_task_context",
-                "submit_plan",
-            ]
-            .contains(&t.name.as_str());
             assert!(
-                has_handler || is_domain,
-                "core tool '{}' has no handler and is not a known domain tool",
+                has_handler,
+                "core tool '{}' has no built-in handler",
                 t.name,
             );
         }

@@ -23,8 +23,6 @@ pub struct NodeConfig {
     pub enable_cmd_tools: bool,
     /// Allowed commands (if cmd tools enabled)
     pub allowed_commands: Vec<String>,
-    /// Path to the tools.toml config file
-    pub tools_config_path: Option<String>,
     /// Orbit service URL
     pub orbit_url: String,
     /// Aura Storage service URL
@@ -47,7 +45,6 @@ impl Default for NodeConfig {
             enable_fs_tools: true,
             enable_cmd_tools: false,
             allowed_commands: vec![],
-            tools_config_path: Some("tools.toml".to_string()),
             orbit_url: "https://orbit-sfvu.onrender.com".to_string(),
             aura_storage_url: "https://aura-storage.onrender.com".to_string(),
             aura_network_url: "https://aura-network.onrender.com".to_string(),
@@ -92,9 +89,6 @@ impl NodeConfig {
         }
         if let Ok(val) = std::env::var("ALLOWED_COMMANDS") {
             config.allowed_commands = val.split(',').map(String::from).collect();
-        }
-        if let Ok(val) = std::env::var("TOOLS_CONFIG") {
-            config.tools_config_path = Some(val);
         }
         if let Ok(val) = std::env::var("ORBIT_URL") {
             config.orbit_url = val;
@@ -143,7 +137,6 @@ mod tests {
         std::env::remove_var("ENABLE_FS_TOOLS");
         std::env::remove_var("ENABLE_CMD_TOOLS");
         std::env::remove_var("ALLOWED_COMMANDS");
-        std::env::remove_var("TOOLS_CONFIG");
         std::env::remove_var("ORBIT_URL");
         std::env::remove_var("AURA_STORAGE_URL");
         std::env::remove_var("AURA_NETWORK_URL");
@@ -163,7 +156,6 @@ mod tests {
         assert!(config.enable_fs_tools);
         assert!(!config.enable_cmd_tools);
         assert!(config.allowed_commands.is_empty());
-        assert_eq!(config.tools_config_path.as_deref(), Some("tools.toml"));
         assert_eq!(config.orbit_url, "https://orbit-sfvu.onrender.com");
         assert_eq!(config.aura_storage_url, "https://aura-storage.onrender.com");
         assert_eq!(config.aura_network_url, "https://aura-network.onrender.com");
@@ -389,7 +381,6 @@ mod tests {
         std::env::set_var("ENABLE_FS_TOOLS", "false");
         std::env::set_var("ENABLE_CMD_TOOLS", "true");
         std::env::set_var("ALLOWED_COMMANDS", "git,cargo,npm");
-        std::env::set_var("TOOLS_CONFIG", "/etc/aura/tools.toml");
         std::env::set_var("ORBIT_URL", "https://orbit.example.com");
         std::env::set_var("AURA_STORAGE_URL", "https://storage.example.com");
         std::env::set_var("AURA_NETWORK_URL", "https://network.example.com");
@@ -406,7 +397,6 @@ mod tests {
         assert!(!config.enable_fs_tools);
         assert!(config.enable_cmd_tools);
         assert_eq!(config.allowed_commands, vec!["git", "cargo", "npm"]);
-        assert_eq!(config.tools_config_path.as_deref(), Some("/etc/aura/tools.toml"));
         assert_eq!(config.orbit_url, "https://orbit.example.com");
         assert_eq!(config.aura_storage_url, "https://storage.example.com");
         assert_eq!(config.aura_network_url, "https://network.example.com");

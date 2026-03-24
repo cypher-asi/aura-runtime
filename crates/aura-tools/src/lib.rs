@@ -4,7 +4,7 @@
 //!
 //! This crate provides:
 //! - `ToolRegistry` trait and `DefaultToolRegistry` implementation
-//! - `ToolExecutor` for executing tool calls
+//! - `ToolResolver` for unified tool dispatch (built-in + domain)
 //! - Sandboxed filesystem and command operations
 //! - Threshold-based async command execution
 //!
@@ -25,25 +25,19 @@
 )]
 
 pub mod catalog;
-pub mod config;
 pub mod definitions;
 pub mod domain_tools;
 mod error;
 mod executor;
-mod installed;
-pub mod installer;
 pub(crate) mod fs_tools;
 pub(crate) mod registry;
 pub mod resolver;
 mod sandbox;
 pub(crate) mod tool;
 
-pub use aura_core::InstalledToolDefinition;
 pub use catalog::ToolCatalog;
-pub use config::ToolConfigError;
 pub use error::ToolError;
 pub use executor::ToolExecutor;
-pub use installer::ToolInstaller;
 pub use fs_tools::{cmd_run_with_threshold, cmd_spawn, output_to_tool_result, ThresholdResult};
 pub use registry::{DefaultToolRegistry, ToolRegistry};
 pub use resolver::ToolResolver;
@@ -73,11 +67,11 @@ impl Default for ToolConfig {
     fn default() -> Self {
         Self {
             enable_fs: true,
-            enable_commands: true, // Enabled by default for agentic workflows
-            command_allowlist: vec![], // Empty = all commands allowed
-            max_read_bytes: 5 * 1024 * 1024, // 5MB
-            sync_threshold_ms: 5_000, // 5s sync threshold
-            max_async_timeout_ms: 600_000, // 10 minutes async timeout
+            enable_commands: true,
+            command_allowlist: vec![],
+            max_read_bytes: 5 * 1024 * 1024,
+            sync_threshold_ms: 5_000,
+            max_async_timeout_ms: 600_000,
         }
     }
 }

@@ -1,20 +1,16 @@
 //! Canonical tool catalog — single source of truth for tool metadata.
 //!
-//! Stores all tool entries (internal built-ins, schema-only definitions, and
-//! HTTP-installed tools) with profile and owner annotations.  Replaces the
-//! ad-hoc composition previously spread across `DefaultToolRegistry`,
-//! `ToolInstaller`, and the static lists in `definitions.rs`.
+//! Stores all tool entries (internal built-ins and schema-only definitions)
+//! with profile and owner annotations.  Replaces the ad-hoc composition
+//! previously spread across `DefaultToolRegistry` and the static lists in
+//! `definitions.rs`.
 
-use crate::config::{load_tools_from_file, ToolConfigError};
 use crate::definitions;
 use crate::tool::builtin_tools;
 use crate::ToolConfig;
-use aura_core::InstalledToolDefinition;
 use aura_reasoner::ToolDefinition;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use std::sync::RwLock;
-use tracing::{debug, info};
+use std::collections::HashSet;
+use tracing::debug;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,10 +21,6 @@ use tracing::{debug, info};
 pub enum ToolOwner {
     /// Executed by an internal handler (built-in `Tool` impl).
     Internal,
-    /// Executed via HTTP POST to an installed endpoint.
-    Http,
-    /// Has both internal and HTTP handlers; internal takes precedence.
-    Both,
 }
 
 /// Runtime visibility profile.
@@ -60,12 +52,10 @@ pub struct CatalogEntry {
 
 /// Canonical catalog of every tool the system knows about.
 ///
-/// Static entries are populated at construction from `definitions.rs` and
-/// `builtin_tools()`.  Dynamic HTTP-installed entries can be added / removed
-/// at runtime (thread-safe via `RwLock`).
+/// Entries are populated at construction from `definitions.rs` and
+/// `builtin_tools()`.
 pub struct ToolCatalog {
     entries: Vec<CatalogEntry>,
-    installed: RwLock<HashMap<String, InstalledToolDefinition>>,
 }
 
 impl ToolCatalog {
@@ -120,10 +110,7 @@ impl ToolCatalog {
         }
 
         debug!(entry_count = entries.len(), "Built tool catalog");
-        Self {
-            entries,
-            installed: RwLock::new(HashMap::new()),
-        }
+        Self { entries }
     }
 
     // -----------------------------------------------------------------------
@@ -131,24 +118,13 @@ impl ToolCatalog {
     // -----------------------------------------------------------------------
 
     /// Get tool definitions for a profile **without** `ToolConfig` filtering.
-    ///
-    /// Includes installed HTTP tools (visible to every profile).
     #[must_use]
     pub fn tools_for_profile(&self, profile: ToolProfile) -> Vec<ToolDefinition> {
-        let mut tools: Vec<ToolDefinition> = self
-            .entries
+        self.entries
             .iter()
             .filter(|e| e.profiles.contains(&profile))
             .map(|e| e.definition.clone())
-            .collect();
-
-        let static_names: HashSet<String> = tools.iter().map(|t| t.name.clone()).collect();
-        for def in self.installed_definitions() {
-            if !static_names.contains(&def.name) {
-                tools.push(def);
-            }
-        }
-        tools
+            .collect()
     }
 
     /// Get visible tools for a profile, filtered by `ToolConfig` permissions.
@@ -168,111 +144,6 @@ impl ToolCatalog {
             .collect()
     }
 
-    // -----------------------------------------------------------------------
-    // Installed (HTTP) tool management — replaces `ToolInstaller`
-    // -----------------------------------------------------------------------
-
-    /// Install (or replace) an HTTP tool definition.
-    pub fn install(&self, def: InstalledToolDefinition) {
-        info!(tool = %def.name, "Installing tool");
-        self.installed
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(def.name.clone(), def);
-    }
-
-    /// Uninstall a tool by name. Returns `true` if it existed.
-    pub fn uninstall(&self, name: &str) -> bool {
-        info!(tool = %name, "Uninstalling tool");
-        self.installed
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(name)
-            .is_some()
-    }
-
-    /// Load installed tools from a TOML config file.
-    ///
-    /// # Errors
-    /// Returns `ToolConfigError` if the file cannot be read or parsed.
-    pub fn load_from_file(&self, path: &Path) -> Result<usize, ToolConfigError> {
-        let defs = load_tools_from_file(path)?;
-        let count = defs.len();
-        let mut map = self
-            .installed
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for def in defs {
-            debug!(tool = %def.name, "Loading tool from config");
-            map.insert(def.name.clone(), def);
-        }
-        info!(count, path = %path.display(), "Loaded tools from config file");
-        Ok(count)
-    }
-
-    /// Snapshot of all installed HTTP tool definitions.
-    #[must_use]
-    pub fn installed_snapshot(&self) -> Vec<InstalledToolDefinition> {
-        self.installed
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .cloned()
-            .collect()
-    }
-
-    /// Model-facing `ToolDefinition`s for installed tools.
-    #[must_use]
-    pub fn installed_definitions(&self) -> Vec<ToolDefinition> {
-        self.installed
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .map(|def| ToolDefinition {
-                name: def.name.clone(),
-                description: def.description.clone(),
-                input_schema: def.input_schema.clone(),
-                cache_control: None,
-            })
-            .collect()
-    }
-
-    /// Look up an installed tool by name.
-    #[must_use]
-    pub fn get_installed(&self, name: &str) -> Option<InstalledToolDefinition> {
-        self.installed
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(name)
-            .cloned()
-    }
-
-    /// Number of installed HTTP tools.
-    #[must_use]
-    pub fn installed_count(&self) -> usize {
-        self.installed
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len()
-    }
-
-    /// Names of all installed HTTP tools.
-    #[must_use]
-    pub fn installed_names(&self) -> Vec<String> {
-        self.installed
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .keys()
-            .cloned()
-            .collect()
-    }
-
-    /// Whether the catalog is empty (no installed tools).
-    #[must_use]
-    pub fn is_installed_empty(&self) -> bool {
-        self.installed_count() == 0
-    }
-
     /// Total static entry count.
     #[must_use]
     pub fn static_count(&self) -> usize {
@@ -282,18 +153,10 @@ impl ToolCatalog {
     /// Determine the effective [`ToolOwner`] for a tool name.
     #[must_use]
     pub fn owner_of(&self, name: &str) -> Option<ToolOwner> {
-        let is_static = self.entries.iter().any(|e| e.definition.name == name);
-        let is_installed = self
-            .installed
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains_key(name);
-        match (is_static, is_installed) {
-            (true, true) => Some(ToolOwner::Both),
-            (true, false) => Some(ToolOwner::Internal),
-            (false, true) => Some(ToolOwner::Http),
-            (false, false) => None,
-        }
+        self.entries
+            .iter()
+            .any(|e| e.definition.name == name)
+            .then_some(ToolOwner::Internal)
     }
 }
 
@@ -307,7 +170,6 @@ impl std::fmt::Debug for ToolCatalog {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolCatalog")
             .field("static_entries", &self.entries.len())
-            .field("installed_count", &self.installed_count())
             .finish()
     }
 }
@@ -368,8 +230,6 @@ fn add_project_id_param(mut td: ToolDefinition) -> ToolDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aura_core::ToolAuth;
-    use std::collections::HashSet;
 
     #[test]
     fn catalog_has_entries() {
@@ -425,46 +285,10 @@ mod tests {
     }
 
     #[test]
-    fn install_and_uninstall() {
-        let cat = ToolCatalog::new();
-        assert!(cat.is_installed_empty());
-
-        cat.install(InstalledToolDefinition {
-            name: "http_tool".into(),
-            description: "test".into(),
-            input_schema: serde_json::json!({"type": "object"}),
-            endpoint: "http://localhost/tool".into(),
-            auth: ToolAuth::None,
-            timeout_ms: None,
-            namespace: None,
-            metadata: Default::default(),
-        });
-        assert_eq!(cat.installed_count(), 1);
-
-        let tools = cat.tools_for_profile(ToolProfile::Core);
-        assert!(tools.iter().any(|t| t.name == "http_tool"));
-
-        assert!(cat.uninstall("http_tool"));
-        assert!(cat.is_installed_empty());
-    }
-
-    #[test]
     fn owner_of_reports_correctly() {
         let cat = ToolCatalog::new();
         assert_eq!(cat.owner_of("read_file"), Some(ToolOwner::Internal));
         assert_eq!(cat.owner_of("nonexistent"), None);
-
-        cat.install(InstalledToolDefinition {
-            name: "ext_tool".into(),
-            description: "test".into(),
-            input_schema: serde_json::json!({"type": "object"}),
-            endpoint: "http://localhost/ext".into(),
-            auth: ToolAuth::None,
-            timeout_ms: None,
-            namespace: None,
-            metadata: Default::default(),
-        });
-        assert_eq!(cat.owner_of("ext_tool"), Some(ToolOwner::Http));
     }
 
     #[test]
@@ -510,25 +334,5 @@ mod tests {
                 tool.name()
             );
         }
-    }
-
-    #[test]
-    fn load_from_file_works() {
-        use std::io::Write;
-        let toml = r#"
-[[tool]]
-name = "loaded_tool"
-description = "A loaded tool"
-endpoint = "http://localhost:8080/loaded"
-[tool.input_schema]
-type = "object"
-"#;
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(toml.as_bytes()).unwrap();
-
-        let cat = ToolCatalog::new();
-        let count = cat.load_from_file(file.path()).unwrap();
-        assert_eq!(count, 1);
-        assert_eq!(cat.installed_count(), 1);
     }
 }

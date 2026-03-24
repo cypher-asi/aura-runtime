@@ -11,7 +11,7 @@ use crate::protocol::{self, SessionInit};
 use aura_agent::{prompts::default_system_prompt, AgentLoopConfig};
 use aura_core::{AgentId, InstalledToolDefinition};
 use aura_reasoner::{Message, ModelProvider, ToolDefinition};
-use aura_tools::domain_tools::DomainToolExecutor;
+use aura_tools::domain_tools::DomainApi;
 use aura_tools::{ToolCatalog, ToolConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -127,6 +127,15 @@ impl Session {
         if let Some(token) = init.token {
             self.auth_token = Some(token);
         }
+        if let Some(msgs) = init.conversation_messages {
+            for msg in msgs {
+                match msg.role.as_str() {
+                    "user" => self.messages.push(Message::user(&msg.content)),
+                    "assistant" => self.messages.push(Message::assistant(&msg.content)),
+                    _ => {}
+                }
+            }
+        }
         self.initialized = true;
         Ok(())
     }
@@ -181,6 +190,6 @@ pub struct WsContext {
     pub auth_token: Option<String>,
     /// Canonical tool catalog (shared across sessions).
     pub catalog: Arc<ToolCatalog>,
-    /// Domain tool executor for native spec/task/project tool execution.
-    pub domain_executor: Option<Arc<DomainToolExecutor>>,
+    /// Domain API for native spec/task/project/orbit/network tool execution.
+    pub domain_api: Option<Arc<dyn DomainApi>>,
 }

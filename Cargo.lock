@@ -325,6 +325,7 @@ name = "aura-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "aura-agent",
  "aura-core",
  "aura-executor",

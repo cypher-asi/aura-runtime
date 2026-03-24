@@ -143,6 +143,9 @@ pub trait DomainApi: Send + Sync {
         agent_id: &str,
     ) -> anyhow::Result<Option<TaskDescriptor>>;
 
+    // Single task lookup
+    async fn get_task(&self, task_id: &str) -> anyhow::Result<TaskDescriptor>;
+
     // Project
     async fn get_project(&self, project_id: &str) -> anyhow::Result<ProjectDescriptor>;
     async fn update_project(
@@ -150,6 +153,23 @@ pub trait DomainApi: Send + Sync {
         project_id: &str,
         updates: ProjectUpdate,
     ) -> anyhow::Result<ProjectDescriptor>;
+
+    // Storage: logs & stats
+    async fn create_log(
+        &self,
+        project_id: &str,
+        message: &str,
+        level: &str,
+        agent_id: Option<&str>,
+        metadata: Option<&serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value>;
+    async fn list_logs(
+        &self,
+        project_id: &str,
+        level: Option<&str>,
+        limit: Option<u64>,
+    ) -> anyhow::Result<serde_json::Value>;
+    async fn get_project_stats(&self, project_id: &str) -> anyhow::Result<serde_json::Value>;
 
     // Messages
     async fn list_messages(

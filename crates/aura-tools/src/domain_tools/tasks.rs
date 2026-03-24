@@ -6,6 +6,18 @@ use tracing::debug;
 use super::api::{DomainApi, TaskUpdate};
 use super::helpers::{require_str, str_array, str_field};
 
+pub async fn get_task(api: &dyn DomainApi, _project_id: &str, input: &Value) -> String {
+    debug!("domain_tools: get_task");
+    let task_id = match require_str(input, "task_id") {
+        Ok(id) => id,
+        Err(e) => return json!({ "ok": false, "error": e }).to_string(),
+    };
+    match api.get_task(&task_id).await {
+        Ok(t) => json!({ "ok": true, "task": t }).to_string(),
+        Err(e) => json!({ "ok": false, "error": e.to_string() }).to_string(),
+    }
+}
+
 pub async fn list_tasks(api: &dyn DomainApi, project_id: &str, input: &Value) -> String {
     debug!(project_id, "domain_tools: list_tasks");
     let spec_id = str_field(input, "spec_id");

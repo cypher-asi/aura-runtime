@@ -262,24 +262,18 @@ fn start_turn(
 
     let mut resolver = ToolResolver::new(ctx.catalog.clone(), ctx.tool_config.clone());
 
-    if let Some(ref domain_exec) = ctx.domain_executor {
-        resolver = resolver.with_domain_executor(domain_exec.clone());
+    if let Some(ref domain_api) = ctx.domain_api {
+        use aura_tools::domain_tools::DomainToolExecutor;
+        let domain_exec = Arc::new(DomainToolExecutor::with_session_jwt(
+            domain_api.clone(),
+            session.auth_token.clone(),
+        ));
+        resolver = resolver.with_domain_executor(domain_exec);
     }
 
-    for mut tool_def in ctx.catalog.installed_snapshot() {
-        if let Some(ref jwt) = session.auth_token {
-            tool_def.auth = aura_core::ToolAuth::Bearer { token: jwt.clone() };
-        }
-        if let Err(e) = resolver.register_installed(tool_def.clone()) {
-            tracing::warn!(tool = %tool_def.name, error = %e, "Failed to register installed tool");
-        }
-    }
-
-    for tool in &session.installed_tools {
-        if let Err(e) = resolver.register_installed(tool.clone()) {
-            tracing::warn!(tool = %tool.name, error = %e, "Failed to register installed tool");
-        }
-    }
+    // Session-init installed_tools are visible to the model (added to
+    // tool_definitions during init) but execution is handled by the domain
+    // executor for all known domain tools.
 
     let mut executor_router = ExecutorRouter::new();
     executor_router.add_executor(Arc::new(resolver));

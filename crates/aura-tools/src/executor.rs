@@ -1,12 +1,10 @@
 //! Tool executor implementation.
 
 use crate::error::ToolError;
-use crate::installed::InstalledTool;
 use crate::sandbox::Sandbox;
 use crate::tool::{builtin_tools, Tool, ToolContext};
 use crate::ToolConfig;
 use async_trait::async_trait;
-use aura_core::InstalledToolDefinition;
 use aura_core::{Action, ActionKind, Effect, EffectKind, EffectStatus, ToolCall, ToolResult};
 use aura_executor::{ExecuteContext, Executor};
 use bytes::Bytes;
@@ -42,16 +40,6 @@ impl ToolExecutor {
     /// Register an additional tool at runtime.
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         self.tools.insert(tool.name().to_string(), tool);
-    }
-
-    /// Register an installed tool that dispatches via HTTP POST.
-    ///
-    /// # Errors
-    /// Returns `ToolError` if the installed tool's HTTP client cannot be built.
-    pub fn register_installed(&mut self, def: InstalledToolDefinition) -> Result<(), ToolError> {
-        let tool = InstalledTool::new(def)?;
-        self.tools.insert(tool.name().to_string(), Box::new(tool));
-        Ok(())
     }
 
     /// Execute a tool call.
