@@ -181,6 +181,6 @@ pub struct WsContext {
     pub auth_token: Option<String>,
     /// Canonical tool catalog (shared across sessions).
     pub catalog: Arc<ToolCatalog>,
-    /// Domain tool executor for specs/tasks/project.
+    /// Domain tool executor for native spec/task/project tool execution.
     pub domain_executor: Option<Arc<DomainToolExecutor>>,
 }
