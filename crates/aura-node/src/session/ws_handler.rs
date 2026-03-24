@@ -214,6 +214,21 @@ fn handle_session_init(
             ));
     }
 
+    session.tool_definitions.retain(|t| {
+        if !ctx.tool_config.enable_commands && t.name == "run_command" {
+            return false;
+        }
+        if !ctx.tool_config.enable_fs
+            && matches!(
+                t.name.as_str(),
+                "read_file" | "write_file" | "list_files" | "search_code"
+            )
+        {
+            return false;
+        }
+        true
+    });
+
     let tools: Vec<ToolInfo> = session
         .tool_definitions
         .iter()
@@ -331,13 +346,14 @@ fn start_turn(
                 AgentLoopEvent::ToolStart { id, name } => {
                     OutboundMessage::ToolUseStart(ToolUseStart { id, name })
                 }
-                AgentLoopEvent::ToolComplete {
-                    name,
-                    result,
+                AgentLoopEvent::ToolResult {
+                    tool_name,
+                    content,
                     is_error,
+                    ..
                 } => OutboundMessage::ToolResult(ToolResultMsg {
-                    name,
-                    result,
+                    name: tool_name,
+                    result: content,
                     is_error,
                 }),
                 AgentLoopEvent::Error {
@@ -350,7 +366,7 @@ fn start_turn(
                     recoverable,
                 }),
                 AgentLoopEvent::ToolInputSnapshot { .. }
-                | AgentLoopEvent::ToolResult { .. }
+                | AgentLoopEvent::ToolComplete { .. }
                 | AgentLoopEvent::IterationComplete { .. }
                 | AgentLoopEvent::Warning(_) => continue,
             };
