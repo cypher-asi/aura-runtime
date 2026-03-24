@@ -16,6 +16,8 @@ pub(super) struct ApiRequest {
     pub max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ApiThinkingConfig>,
 }
 
 #[derive(Debug, Serialize)]

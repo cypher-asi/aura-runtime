@@ -179,6 +179,7 @@ impl ModelProvider for AnthropicProvider {
         let mut last_err: Option<ReasonerError> = None;
 
         for (model_idx, model) in models.iter().enumerate() {
+            let thinking = resolve_thinking(&request, model);
             let api_request = ApiRequest {
                 model: model.clone(),
                 system: system.clone(),
@@ -190,7 +191,12 @@ impl ModelProvider for AnthropicProvider {
                 },
                 tool_choice: convert_tool_choice(&request.tool_choice),
                 max_tokens: request.max_tokens,
-                temperature: request.temperature,
+                temperature: if thinking.is_some() {
+                    Some(1.0)
+                } else {
+                    request.temperature
+                },
+                thinking,
             };
 
             debug!(

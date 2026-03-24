@@ -95,8 +95,10 @@ fn emit_stream_event(
 impl AgentLoop {
     /// Perform a model completion using streaming, emitting events as they arrive.
     ///
-    /// Falls back to non-streaming `provider.complete()` if the streaming call
-    /// itself returns an error.
+    /// Falls back to non-streaming `provider.complete()` only for mid-stream
+    /// transport errors. Request-level failures (e.g. 4xx validation errors)
+    /// are propagated directly — retrying with a different request format
+    /// would not fix them and produces confusing double errors.
     #[allow(clippy::cast_possible_truncation)]
     pub(super) async fn complete_with_streaming(
         &self,
@@ -107,54 +109,45 @@ impl AgentLoop {
     ) -> anyhow::Result<ModelResponse> {
         let start = Instant::now();
 
-        match provider.complete_streaming(request.clone()).await.map_err(anyhow::Error::from) {
-            Ok(mut stream) => {
-                let mut accumulator = StreamAccumulator::new();
+        let mut stream = provider
+            .complete_streaming(request.clone())
+            .await
+            .map_err(anyhow::Error::from)?;
 
-                loop {
-                    let next = if let Some(token) = cancellation_token {
-                        tokio::select! {
-                            () = token.cancelled() => {
-                                return Err(anyhow::anyhow!("Cancelled"));
-                            }
-                            item = stream.next() => item,
-                        }
-                    } else {
-                        stream.next().await
-                    };
+        let mut accumulator = StreamAccumulator::new();
 
-                    match next {
-                        Some(Ok(event)) => {
-                            accumulator.process(&event);
-                            emit_stream_event(event_tx, &event, &accumulator);
-                        }
-                        Some(Err(e)) => {
-                            debug!("Stream error, falling back to non-streaming: {e}");
-                            emit(
-                                event_tx,
-                                AgentLoopEvent::Warning(format!(
-                                    "Stream error, retrying without streaming: {e}"
-                                )),
-                            );
-                            return provider.complete(request).await.map_err(Into::into);
-                        }
-                        None => break,
+        loop {
+            let next = if let Some(token) = cancellation_token {
+                tokio::select! {
+                    () = token.cancelled() => {
+                        return Err(anyhow::anyhow!("Cancelled"));
                     }
+                    item = stream.next() => item,
                 }
+            } else {
+                stream.next().await
+            };
 
-                let latency_ms = start.elapsed().as_millis() as u64;
-                accumulator.into_response(0, latency_ms)
-            }
-            Err(e) => {
-                debug!("complete_streaming failed, falling back: {e}");
-                emit(
-                    event_tx,
-                    AgentLoopEvent::Warning(format!(
-                        "Streaming unavailable, using non-streaming: {e}"
-                    )),
-                );
-                provider.complete(request).await.map_err(Into::into)
+            match next {
+                Some(Ok(event)) => {
+                    accumulator.process(&event);
+                    emit_stream_event(event_tx, &event, &accumulator);
+                }
+                Some(Err(e)) => {
+                    debug!("Stream error, falling back to non-streaming: {e}");
+                    emit(
+                        event_tx,
+                        AgentLoopEvent::Warning(format!(
+                            "Stream error, retrying without streaming: {e}"
+                        )),
+                    );
+                    return provider.complete(request).await.map_err(Into::into);
+                }
+                None => break,
             }
         }
+
+        let latency_ms = start.elapsed().as_millis() as u64;
+        accumulator.into_response(0, latency_ms)
     }
 }
