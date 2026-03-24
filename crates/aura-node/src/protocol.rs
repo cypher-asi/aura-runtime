@@ -54,7 +54,8 @@ mod tests {
             "temperature": 0.7,
             "max_turns": 10,
             "workspace": "/tmp/ws",
-            "token": "jwt-abc"
+            "token": "jwt-abc",
+            "project_id": "proj-123"
         });
         let msg: InboundMessage = serde_json::from_value(json).unwrap();
         match msg {
@@ -66,6 +67,7 @@ mod tests {
                 assert_eq!(init.max_turns, Some(10));
                 assert_eq!(init.workspace.as_deref(), Some("/tmp/ws"));
                 assert_eq!(init.token.as_deref(), Some("jwt-abc"));
+                assert_eq!(init.project_id.as_deref(), Some("proj-123"));
             }
             _ => panic!("Expected SessionInit"),
         }

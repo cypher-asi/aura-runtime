@@ -101,60 +101,69 @@ pub struct CreateSessionParams {
 
 #[async_trait]
 pub trait DomainApi: Send + Sync {
-    // Specs
-    async fn list_specs(&self, project_id: &str) -> anyhow::Result<Vec<SpecDescriptor>>;
-    async fn get_spec(&self, spec_id: &str) -> anyhow::Result<SpecDescriptor>;
+    // Specs — JWT auth via /api/ routes
+    async fn list_specs(&self, project_id: &str, jwt: Option<&str>) -> anyhow::Result<Vec<SpecDescriptor>>;
+    async fn get_spec(&self, spec_id: &str, jwt: Option<&str>) -> anyhow::Result<SpecDescriptor>;
     async fn create_spec(
         &self,
         project_id: &str,
         title: &str,
         content: &str,
+        jwt: Option<&str>,
     ) -> anyhow::Result<SpecDescriptor>;
     async fn update_spec(
         &self,
         spec_id: &str,
         title: Option<&str>,
         content: Option<&str>,
+        jwt: Option<&str>,
     ) -> anyhow::Result<SpecDescriptor>;
-    async fn delete_spec(&self, spec_id: &str) -> anyhow::Result<()>;
+    async fn delete_spec(&self, spec_id: &str, jwt: Option<&str>) -> anyhow::Result<()>;
 
-    // Tasks
+    // Tasks — JWT auth via /api/ routes
     async fn list_tasks(
         &self,
         project_id: &str,
         spec_id: Option<&str>,
+        jwt: Option<&str>,
     ) -> anyhow::Result<Vec<TaskDescriptor>>;
     async fn create_task(
         &self,
+        project_id: &str,
         spec_id: &str,
         title: &str,
         description: &str,
         dependencies: &[String],
+        jwt: Option<&str>,
     ) -> anyhow::Result<TaskDescriptor>;
     async fn update_task(
         &self,
         task_id: &str,
         updates: TaskUpdate,
+        jwt: Option<&str>,
     ) -> anyhow::Result<TaskDescriptor>;
-    async fn transition_task(&self, task_id: &str, status: &str) -> anyhow::Result<TaskDescriptor>;
+    async fn delete_task(&self, task_id: &str, jwt: Option<&str>) -> anyhow::Result<()>;
+    async fn transition_task(&self, task_id: &str, status: &str, jwt: Option<&str>) -> anyhow::Result<TaskDescriptor>;
     async fn claim_next_task(
         &self,
         project_id: &str,
         agent_id: &str,
+        jwt: Option<&str>,
     ) -> anyhow::Result<Option<TaskDescriptor>>;
 
-    // Single task lookup
-    async fn get_task(&self, task_id: &str) -> anyhow::Result<TaskDescriptor>;
+    // Single task lookup — JWT auth via /api/ routes
+    async fn get_task(&self, task_id: &str, jwt: Option<&str>) -> anyhow::Result<TaskDescriptor>;
 
-    // Project
-    async fn get_project(&self, project_id: &str) -> anyhow::Result<ProjectDescriptor>;
+    // Project (aura-network) — JWT auth via /api/ routes
+    async fn get_project(&self, project_id: &str, jwt: Option<&str>) -> anyhow::Result<ProjectDescriptor>;
     async fn update_project(
         &self,
         project_id: &str,
         updates: ProjectUpdate,
+        jwt: Option<&str>,
     ) -> anyhow::Result<ProjectDescriptor>;
 
-    // Storage: logs & stats
+    // Storage: logs — create uses /internal/ (token auth), list uses /api/ (JWT)
     async fn create_log(
         &self,
         project_id: &str,
@@ -168,8 +177,9 @@ pub trait DomainApi: Send + Sync {
         project_id: &str,
         level: Option<&str>,
         limit: Option<u64>,
+        jwt: Option<&str>,
     ) -> anyhow::Result<serde_json::Value>;
-    async fn get_project_stats(&self, project_id: &str) -> anyhow::Result<serde_json::Value>;
+    async fn get_project_stats(&self, project_id: &str, jwt: Option<&str>) -> anyhow::Result<serde_json::Value>;
 
     // Messages
     async fn list_messages(

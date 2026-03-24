@@ -57,6 +57,8 @@ pub struct Session {
     pub context_window_tokens: u64,
     /// JWT auth token for proxy routing.
     pub auth_token: Option<String>,
+    /// Project ID for domain tool calls.
+    pub project_id: Option<String>,
 }
 
 impl Session {
@@ -80,6 +82,7 @@ impl Session {
             tool_definitions: Vec::new(),
             context_window_tokens: 200_000,
             auth_token: None,
+            project_id: None,
         }
     }
 
@@ -126,6 +129,9 @@ impl Session {
         }
         if let Some(token) = init.token {
             self.auth_token = Some(token);
+        }
+        if let Some(pid) = init.project_id {
+            self.project_id = Some(pid);
         }
         if let Some(msgs) = init.conversation_messages {
             for msg in msgs {

@@ -68,94 +68,54 @@ impl DomainToolExecutor {
     /// Execute a domain tool by name.
     ///
     /// `project_id` is threaded through from the session context.
+    /// The session JWT is injected into `input` so handlers can forward it.
     /// Returns a JSON string result (always contains an `ok` field).
     pub async fn execute(&self, tool_name: &str, project_id: &str, input: &Value) -> String {
+        let input = self.inject_jwt(input);
         match tool_name {
             // Specs
-            "list_specs" => specs::list_specs(self.api.as_ref(), project_id, input).await,
-            "get_spec" => specs::get_spec(self.api.as_ref(), project_id, input).await,
-            "create_spec" => specs::create_spec(self.api.as_ref(), project_id, input).await,
-            "update_spec" => specs::update_spec(self.api.as_ref(), project_id, input).await,
-            "delete_spec" => specs::delete_spec(self.api.as_ref(), project_id, input).await,
+            "list_specs" => specs::list_specs(self.api.as_ref(), project_id, &input).await,
+            "get_spec" => specs::get_spec(self.api.as_ref(), project_id, &input).await,
+            "create_spec" => specs::create_spec(self.api.as_ref(), project_id, &input).await,
+            "update_spec" => specs::update_spec(self.api.as_ref(), project_id, &input).await,
+            "delete_spec" => specs::delete_spec(self.api.as_ref(), project_id, &input).await,
 
             // Tasks
-            "list_tasks" => tasks::list_tasks(self.api.as_ref(), project_id, input).await,
-            "get_task" => tasks::get_task(self.api.as_ref(), project_id, input).await,
-            "create_task" => tasks::create_task(self.api.as_ref(), project_id, input).await,
-            "update_task" => tasks::update_task(self.api.as_ref(), project_id, input).await,
-            "delete_task" => tasks::delete_task(self.api.as_ref(), project_id, input).await,
-            "transition_task" => tasks::transition_task(self.api.as_ref(), project_id, input).await,
+            "list_tasks" => tasks::list_tasks(self.api.as_ref(), project_id, &input).await,
+            "get_task" => tasks::get_task(self.api.as_ref(), project_id, &input).await,
+            "create_task" => tasks::create_task(self.api.as_ref(), project_id, &input).await,
+            "update_task" => tasks::update_task(self.api.as_ref(), project_id, &input).await,
+            "delete_task" => tasks::delete_task(self.api.as_ref(), project_id, &input).await,
+            "transition_task" => tasks::transition_task(self.api.as_ref(), project_id, &input).await,
 
             // Project
-            "get_project" => project::get_project(self.api.as_ref(), project_id, input).await,
-            "update_project" => project::update_project(self.api.as_ref(), project_id, input).await,
+            "get_project" => project::get_project(self.api.as_ref(), project_id, &input).await,
+            "update_project" => project::update_project(self.api.as_ref(), project_id, &input).await,
 
             // Storage (logs, stats)
-            "create_log" => storage::create_log(self.api.as_ref(), project_id, input).await,
-            "list_logs" => storage::list_logs(self.api.as_ref(), project_id, input).await,
+            "create_log" => storage::create_log(self.api.as_ref(), project_id, &input).await,
+            "list_logs" => storage::list_logs(self.api.as_ref(), project_id, &input).await,
             "get_project_stats" => {
-                storage::get_project_stats(self.api.as_ref(), project_id, input).await
+                storage::get_project_stats(self.api.as_ref(), project_id, &input).await
             }
 
-            // Orbit (git operations — JWT injected from session)
-            "orbit_push" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_push(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_create_repo" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_create_repo(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_list_repos" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_list_repos(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_list_branches" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_list_branches(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_create_branch" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_create_branch(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_list_commits" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_list_commits(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_get_diff" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_get_diff(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_create_pr" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_create_pr(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_list_prs" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_list_prs(self.api.as_ref(), project_id, &inp).await
-            }
-            "orbit_merge_pr" => {
-                let inp = self.inject_jwt(input);
-                orbit::orbit_merge_pr(self.api.as_ref(), project_id, &inp).await
-            }
+            // Orbit (git operations)
+            "orbit_push" => orbit::orbit_push(self.api.as_ref(), project_id, &input).await,
+            "orbit_create_repo" => orbit::orbit_create_repo(self.api.as_ref(), project_id, &input).await,
+            "orbit_list_repos" => orbit::orbit_list_repos(self.api.as_ref(), project_id, &input).await,
+            "orbit_list_branches" => orbit::orbit_list_branches(self.api.as_ref(), project_id, &input).await,
+            "orbit_create_branch" => orbit::orbit_create_branch(self.api.as_ref(), project_id, &input).await,
+            "orbit_list_commits" => orbit::orbit_list_commits(self.api.as_ref(), project_id, &input).await,
+            "orbit_get_diff" => orbit::orbit_get_diff(self.api.as_ref(), project_id, &input).await,
+            "orbit_create_pr" => orbit::orbit_create_pr(self.api.as_ref(), project_id, &input).await,
+            "orbit_list_prs" => orbit::orbit_list_prs(self.api.as_ref(), project_id, &input).await,
+            "orbit_merge_pr" => orbit::orbit_merge_pr(self.api.as_ref(), project_id, &input).await,
 
-            // Network (social, billing — JWT injected for user-scoped calls)
-            "post_to_feed" => {
-                let inp = self.inject_jwt(input);
-                network::post_to_feed(self.api.as_ref(), project_id, &inp).await
-            }
-            "list_projects" => {
-                let inp = self.inject_jwt(input);
-                network::network_list_projects(self.api.as_ref(), project_id, &inp).await
-            }
-            "check_budget" => {
-                let inp = self.inject_jwt(input);
-                network::check_budget(self.api.as_ref(), project_id, &inp).await
-            }
-            "record_usage" => {
-                let inp = self.inject_jwt(input);
-                network::record_usage(self.api.as_ref(), project_id, &inp).await
-            }
+            // Network (social, billing)
+            "post_to_feed" => network::post_to_feed(self.api.as_ref(), project_id, &input).await,
+            "list_projects" => network::network_list_projects(self.api.as_ref(), project_id, &input).await,
+            "check_budget" => network::check_budget(self.api.as_ref(), project_id, &input).await,
+            "record_usage" => network::record_usage(self.api.as_ref(), project_id, &input).await,
 
             other => {
                 warn!(tool = other, "unknown domain tool");
@@ -177,4 +137,10 @@ impl DomainToolExecutor {
     pub fn tool_names(&self) -> &[&'static str] {
         DOMAIN_TOOL_NAMES
     }
+}
+
+/// Returns `true` if `name` is a recognised domain tool, regardless of
+/// whether a [`DomainToolExecutor`] is currently wired up.
+pub fn is_domain_tool(name: &str) -> bool {
+    DOMAIN_TOOL_NAMES.contains(&name)
 }

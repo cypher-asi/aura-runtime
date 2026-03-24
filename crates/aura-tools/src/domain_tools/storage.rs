@@ -6,6 +6,7 @@ use tracing::debug;
 use super::api::DomainApi;
 use super::helpers::str_field;
 
+/// create_log uses the /internal/ endpoint (X-Internal-Token, no JWT needed).
 pub async fn create_log(api: &dyn DomainApi, project_id: &str, input: &Value) -> String {
     debug!(project_id, "domain_tools: create_log");
     let message = input["message"].as_str().unwrap_or_default();
@@ -19,21 +20,25 @@ pub async fn create_log(api: &dyn DomainApi, project_id: &str, input: &Value) ->
     }
 }
 
+/// list_logs uses the /api/ endpoint (JWT auth).
 pub async fn list_logs(api: &dyn DomainApi, project_id: &str, input: &Value) -> String {
     debug!(project_id, "domain_tools: list_logs");
     let level = str_field(input, "level");
     let limit = input["limit"].as_u64();
+    let jwt = str_field(input, "jwt");
 
-    match api.list_logs(project_id, level.as_deref(), limit).await {
+    match api.list_logs(project_id, level.as_deref(), limit, jwt.as_deref()).await {
         Ok(result) => json!({ "ok": true, "result": result }).to_string(),
         Err(e) => json!({ "ok": false, "error": e.to_string() }).to_string(),
     }
 }
 
-pub async fn get_project_stats(api: &dyn DomainApi, project_id: &str, _input: &Value) -> String {
+/// get_project_stats uses the /api/ endpoint (JWT auth).
+pub async fn get_project_stats(api: &dyn DomainApi, project_id: &str, input: &Value) -> String {
     debug!(project_id, "domain_tools: get_project_stats");
+    let jwt = str_field(input, "jwt");
 
-    match api.get_project_stats(project_id).await {
+    match api.get_project_stats(project_id, jwt.as_deref()).await {
         Ok(result) => json!({ "ok": true, "result": result }).to_string(),
         Err(e) => json!({ "ok": false, "error": e.to_string() }).to_string(),
     }

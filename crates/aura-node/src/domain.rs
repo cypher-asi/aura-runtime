@@ -1,7 +1,8 @@
 //! HTTP-backed `DomainApi` implementation.
 //!
-//! Calls aura-storage and aura-network services directly using the
-//! `X-Internal-Token` header for authentication.
+//! Routes to the correct endpoint + auth based on the operation:
+//! - `/api/` routes use `Authorization: Bearer <jwt>` (user JWT from front-end)
+//! - `/internal/` routes use `X-Internal-Token` header (service-to-service)
 
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -32,8 +33,13 @@ impl HttpDomainApi {
         }
     }
 
-    async fn get<T: DeserializeOwned>(&self, url: &str) -> anyhow::Result<T> {
-        debug!(url, "HttpDomainApi GET");
+    // -------------------------------------------------------------------------
+    // Internal-token helpers (X-Internal-Token, for /internal/ routes)
+    // -------------------------------------------------------------------------
+
+    #[allow(dead_code)]
+    async fn internal_get<T: DeserializeOwned>(&self, url: &str) -> anyhow::Result<T> {
+        debug!(url, "HttpDomainApi internal GET");
         let resp = self
             .http
             .get(url)
@@ -50,12 +56,12 @@ impl HttpDomainApi {
         serde_json::from_str(&body).with_context(|| format!("parse response from {url}"))
     }
 
-    async fn post<T: DeserializeOwned>(
+    async fn internal_post<T: DeserializeOwned>(
         &self,
         url: &str,
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
-        debug!(url, "HttpDomainApi POST");
+        debug!(url, "HttpDomainApi internal POST");
         let resp = self
             .http
             .post(url)
@@ -73,31 +79,9 @@ impl HttpDomainApi {
         serde_json::from_str(&text).with_context(|| format!("parse response from {url}"))
     }
 
-    async fn put<T: DeserializeOwned>(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-    ) -> anyhow::Result<T> {
-        debug!(url, "HttpDomainApi PUT");
-        let resp = self
-            .http
-            .put(url)
-            .header("X-Internal-Token", &self.internal_token)
-            .json(body)
-            .send()
-            .await
-            .with_context(|| format!("PUT {url}"))?;
-        let status = resp.status();
-        let text = resp.text().await?;
-        if !status.is_success() {
-            let truncated: String = text.chars().take(300).collect();
-            return Err(anyhow!("HTTP {status}: {truncated}"));
-        }
-        serde_json::from_str(&text).with_context(|| format!("parse response from {url}"))
-    }
-
-    async fn delete_req(&self, url: &str) -> anyhow::Result<()> {
-        debug!(url, "HttpDomainApi DELETE");
+    #[allow(dead_code)]
+    async fn internal_delete(&self, url: &str) -> anyhow::Result<()> {
+        debug!(url, "HttpDomainApi internal DELETE");
         let resp = self
             .http
             .delete(url)
@@ -113,20 +97,114 @@ impl HttpDomainApi {
         }
         Ok(())
     }
+
+    // -------------------------------------------------------------------------
+    // JWT helpers (Authorization: Bearer, for /api/ routes)
+    // -------------------------------------------------------------------------
+
+    fn require_jwt(jwt: Option<&str>) -> anyhow::Result<&str> {
+        jwt.ok_or_else(|| anyhow!("JWT required for this operation but not provided — ensure the front-end sends a token in session_init"))
+    }
+
+    async fn api_get<T: DeserializeOwned>(&self, url: &str, jwt: &str) -> anyhow::Result<T> {
+        debug!(url, "HttpDomainApi api GET");
+        let resp = self
+            .http
+            .get(url)
+            .bearer_auth(jwt)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        if !status.is_success() {
+            let truncated: String = body.chars().take(300).collect();
+            return Err(anyhow!("HTTP {status}: {truncated}"));
+        }
+        serde_json::from_str(&body).with_context(|| format!("parse response from {url}"))
+    }
+
+    async fn api_post<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+        jwt: &str,
+    ) -> anyhow::Result<T> {
+        debug!(url, "HttpDomainApi api POST");
+        let resp = self
+            .http
+            .post(url)
+            .bearer_auth(jwt)
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("POST {url}"))?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            let truncated: String = text.chars().take(300).collect();
+            return Err(anyhow!("HTTP {status}: {truncated}"));
+        }
+        serde_json::from_str(&text).with_context(|| format!("parse response from {url}"))
+    }
+
+    async fn api_put<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+        jwt: &str,
+    ) -> anyhow::Result<T> {
+        debug!(url, "HttpDomainApi api PUT");
+        let resp = self
+            .http
+            .put(url)
+            .bearer_auth(jwt)
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("PUT {url}"))?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            let truncated: String = text.chars().take(300).collect();
+            return Err(anyhow!("HTTP {status}: {truncated}"));
+        }
+        serde_json::from_str(&text).with_context(|| format!("parse response from {url}"))
+    }
+
+    async fn api_delete(&self, url: &str, jwt: &str) -> anyhow::Result<()> {
+        debug!(url, "HttpDomainApi api DELETE");
+        let resp = self
+            .http
+            .delete(url)
+            .bearer_auth(jwt)
+            .send()
+            .await
+            .with_context(|| format!("DELETE {url}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            let truncated: String = body.chars().take(300).collect();
+            return Err(anyhow!("HTTP {status}: {truncated}"));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl DomainApi for HttpDomainApi {
-    // -- Specs (aura-storage) -------------------------------------------------
+    // -- Specs (aura-storage, JWT /api/) --------------------------------------
 
-    async fn list_specs(&self, project_id: &str) -> anyhow::Result<Vec<SpecDescriptor>> {
+    async fn list_specs(&self, project_id: &str, jwt: Option<&str>) -> anyhow::Result<Vec<SpecDescriptor>> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/projects/{project_id}/specs", self.storage_url);
-        self.get(&url).await
+        self.api_get(&url, jwt).await
     }
 
-    async fn get_spec(&self, spec_id: &str) -> anyhow::Result<SpecDescriptor> {
+    async fn get_spec(&self, spec_id: &str, jwt: Option<&str>) -> anyhow::Result<SpecDescriptor> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/specs/{spec_id}", self.storage_url);
-        self.get(&url).await
+        self.api_get(&url, jwt).await
     }
 
     async fn create_spec(
@@ -134,13 +212,15 @@ impl DomainApi for HttpDomainApi {
         project_id: &str,
         title: &str,
         content: &str,
+        jwt: Option<&str>,
     ) -> anyhow::Result<SpecDescriptor> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/projects/{project_id}/specs", self.storage_url);
         let body = serde_json::json!({
             "title": title,
             "markdownContents": content,
         });
-        self.post(&url, &body).await
+        self.api_post(&url, &body, jwt).await
     }
 
     async fn update_spec(
@@ -148,90 +228,112 @@ impl DomainApi for HttpDomainApi {
         spec_id: &str,
         title: Option<&str>,
         content: Option<&str>,
+        jwt: Option<&str>,
     ) -> anyhow::Result<SpecDescriptor> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/specs/{spec_id}", self.storage_url);
         let body = serde_json::json!({
             "title": title,
             "markdownContents": content,
         });
-        self.put(&url, &body).await
+        self.api_put(&url, &body, jwt).await
     }
 
-    async fn delete_spec(&self, spec_id: &str) -> anyhow::Result<()> {
+    async fn delete_spec(&self, spec_id: &str, jwt: Option<&str>) -> anyhow::Result<()> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/specs/{spec_id}", self.storage_url);
-        self.delete_req(&url).await
+        self.api_delete(&url, jwt).await
     }
 
-    // -- Tasks (aura-storage) -------------------------------------------------
+    // -- Tasks (aura-storage, JWT /api/) --------------------------------------
 
     async fn list_tasks(
         &self,
         project_id: &str,
         spec_id: Option<&str>,
+        jwt: Option<&str>,
     ) -> anyhow::Result<Vec<TaskDescriptor>> {
+        let jwt = Self::require_jwt(jwt)?;
         let mut url = format!("{}/api/projects/{project_id}/tasks", self.storage_url);
         if let Some(sid) = spec_id {
             url.push_str(&format!("?specId={sid}"));
         }
-        self.get(&url).await
+        self.api_get(&url, jwt).await
     }
 
     async fn create_task(
         &self,
+        project_id: &str,
         spec_id: &str,
         title: &str,
         description: &str,
         dependencies: &[String],
+        jwt: Option<&str>,
     ) -> anyhow::Result<TaskDescriptor> {
-        let url = format!("{}/api/specs/{spec_id}/tasks", self.storage_url);
+        let jwt = Self::require_jwt(jwt)?;
+        let url = format!("{}/api/projects/{project_id}/tasks", self.storage_url);
         let body = serde_json::json!({
+            "specId": spec_id,
             "title": title,
             "description": description,
-            "dependencyIds": dependencies,
+            "dependencyTaskIds": dependencies,
         });
-        self.post(&url, &body).await
+        self.api_post(&url, &body, jwt).await
     }
 
     async fn update_task(
         &self,
         task_id: &str,
         updates: TaskUpdate,
+        jwt: Option<&str>,
     ) -> anyhow::Result<TaskDescriptor> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/tasks/{task_id}", self.storage_url);
         let body = serde_json::json!({
             "title": updates.title,
             "description": updates.description,
             "status": updates.status,
         });
-        self.put(&url, &body).await
+        self.api_put(&url, &body, jwt).await
+    }
+
+    async fn delete_task(&self, task_id: &str, jwt: Option<&str>) -> anyhow::Result<()> {
+        let jwt = Self::require_jwt(jwt)?;
+        let url = format!("{}/api/tasks/{task_id}", self.storage_url);
+        self.api_delete(&url, jwt).await
     }
 
     async fn transition_task(
         &self,
         task_id: &str,
         status: &str,
+        jwt: Option<&str>,
     ) -> anyhow::Result<TaskDescriptor> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/tasks/{task_id}/transition", self.storage_url);
         let body = serde_json::json!({ "status": status });
-        self.post(&url, &body).await
+        self.api_post(&url, &body, jwt).await
     }
 
-    async fn get_task(&self, task_id: &str) -> anyhow::Result<TaskDescriptor> {
+    async fn get_task(&self, task_id: &str, jwt: Option<&str>) -> anyhow::Result<TaskDescriptor> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/tasks/{task_id}", self.storage_url);
-        self.get(&url).await
+        self.api_get(&url, jwt).await
     }
 
     async fn claim_next_task(
         &self,
         project_id: &str,
         agent_id: &str,
+        jwt: Option<&str>,
     ) -> anyhow::Result<Option<TaskDescriptor>> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!(
             "{}/api/projects/{project_id}/tasks/claim?agentId={agent_id}",
             self.storage_url
         );
         let body = serde_json::json!({});
-        match self.post::<TaskDescriptor>(&url, &body).await {
+        match self.api_post::<TaskDescriptor>(&url, &body, jwt).await {
             Ok(t) => Ok(Some(t)),
             Err(e) => {
                 let msg = e.to_string();
@@ -244,18 +346,21 @@ impl DomainApi for HttpDomainApi {
         }
     }
 
-    // -- Project (aura-network) -----------------------------------------------
+    // -- Project (aura-network, JWT /api/) ------------------------------------
 
-    async fn get_project(&self, project_id: &str) -> anyhow::Result<ProjectDescriptor> {
+    async fn get_project(&self, project_id: &str, jwt: Option<&str>) -> anyhow::Result<ProjectDescriptor> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/projects/{project_id}", self.network_url);
-        self.get(&url).await
+        self.api_get(&url, jwt).await
     }
 
     async fn update_project(
         &self,
         project_id: &str,
         updates: ProjectUpdate,
+        jwt: Option<&str>,
     ) -> anyhow::Result<ProjectDescriptor> {
+        let jwt = Self::require_jwt(jwt)?;
         let url = format!("{}/api/projects/{project_id}", self.network_url);
         let body = serde_json::json!({
             "name": updates.name,
@@ -264,10 +369,10 @@ impl DomainApi for HttpDomainApi {
             "buildCommand": updates.build_command,
             "testCommand": updates.test_command,
         });
-        self.put(&url, &body).await
+        self.api_put(&url, &body, jwt).await
     }
 
-    // -- Storage: logs & stats (aura-storage) -----------------------------------
+    // -- Storage: logs (create = /internal/, list = /api/) --------------------
 
     async fn create_log(
         &self,
@@ -277,8 +382,9 @@ impl DomainApi for HttpDomainApi {
         agent_id: Option<&str>,
         metadata: Option<&serde_json::Value>,
     ) -> anyhow::Result<serde_json::Value> {
-        let url = format!("{}/api/projects/{project_id}/logs", self.storage_url);
+        let url = format!("{}/internal/logs", self.storage_url);
         let mut body = serde_json::json!({
+            "projectId": project_id,
             "message": message,
             "level": level,
         });
@@ -288,7 +394,7 @@ impl DomainApi for HttpDomainApi {
         if let Some(meta) = metadata {
             body["metadata"] = meta.clone();
         }
-        self.post(&url, &body).await
+        self.internal_post(&url, &body).await
     }
 
     async fn list_logs(
@@ -296,7 +402,9 @@ impl DomainApi for HttpDomainApi {
         project_id: &str,
         level: Option<&str>,
         limit: Option<u64>,
+        jwt: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
+        let jwt = Self::require_jwt(jwt)?;
         let mut url = format!("{}/api/projects/{project_id}/logs", self.storage_url);
         let mut params = Vec::new();
         if let Some(l) = level {
@@ -309,12 +417,16 @@ impl DomainApi for HttpDomainApi {
             url.push('?');
             url.push_str(&params.join("&"));
         }
-        self.get(&url).await
+        self.api_get(&url, jwt).await
     }
 
-    async fn get_project_stats(&self, project_id: &str) -> anyhow::Result<serde_json::Value> {
-        let url = format!("{}/api/projects/{project_id}/stats", self.storage_url);
-        self.get(&url).await
+    async fn get_project_stats(&self, project_id: &str, jwt: Option<&str>) -> anyhow::Result<serde_json::Value> {
+        let jwt = Self::require_jwt(jwt)?;
+        let url = format!(
+            "{}/api/stats?scope=project&projectId={project_id}",
+            self.storage_url
+        );
+        self.api_get(&url, jwt).await
     }
 
     // -- Messages / Sessions (not used by WS sessions) ------------------------

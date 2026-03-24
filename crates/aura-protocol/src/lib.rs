@@ -66,6 +66,9 @@ pub struct SessionInit {
     /// JWT auth token for proxy routing.
     #[serde(default)]
     pub token: Option<String>,
+    /// Project ID for domain tool calls (specs, tasks, etc.).
+    #[serde(default)]
+    pub project_id: Option<String>,
     /// Prior conversation messages to restore into session history.
     #[serde(default)]
     pub conversation_messages: Option<Vec<ConversationMessage>>,
