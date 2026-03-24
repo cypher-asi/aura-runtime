@@ -6,7 +6,8 @@ use crate::scheduler::Scheduler;
 use aura_executor::Executor;
 use aura_reasoner::{AnthropicConfig, AnthropicProvider, MockProvider, ModelProvider};
 use aura_store::RocksStore;
-use aura_tools::{DefaultToolRegistry, ToolConfig, ToolExecutor, ToolInstaller, ToolRegistry};
+use aura_tools::catalog::ToolProfile;
+use aura_tools::{ToolCatalog, ToolConfig, ToolResolver};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -53,21 +54,24 @@ impl Node {
             command_allowlist: self.config.allowed_commands.clone(),
             ..Default::default()
         };
-        let tool_executor: Arc<dyn Executor> = Arc::new(ToolExecutor::new(tool_config.clone()));
-        let executors = vec![tool_executor];
-        info!("Executors configured");
 
-        let tool_registry = DefaultToolRegistry::new();
-        let tools = tool_registry.list();
-
-        let tool_installer = Arc::new(ToolInstaller::new());
+        let catalog = Arc::new(ToolCatalog::new());
         if let Some(ref path) = self.config.tools_config_path {
-            match tool_installer.load_from_file(std::path::Path::new(path)) {
-                Ok(count) => info!(count, path, "Loaded tools from config"),
-                Err(e) => warn!(error = %e, path, "Failed to load tools config"),
+            let p = std::path::Path::new(path);
+            if p.exists() {
+                match catalog.load_from_file(p) {
+                    Ok(count) => info!(count, path, "Loaded tools from config"),
+                    Err(e) => warn!(error = %e, path, "Failed to load tools config"),
+                }
             }
         }
-        info!(tool_count = tool_installer.len(), "Tool installer ready");
+        info!(installed = catalog.installed_count(), static_tools = catalog.static_count(), "Tool catalog ready");
+
+        let tools = catalog.visible_tools(ToolProfile::Core, &tool_config);
+        let resolver: Arc<dyn Executor> =
+            Arc::new(ToolResolver::new(catalog.clone(), tool_config.clone()));
+        let executors = vec![resolver];
+        info!("Executors configured");
 
         let provider = Self::create_model_provider();
 
@@ -86,7 +90,7 @@ impl Node {
             config: self.config.clone(),
             provider,
             tool_config,
-            tool_installer,
+            catalog,
         };
         let app = create_router(state);
 

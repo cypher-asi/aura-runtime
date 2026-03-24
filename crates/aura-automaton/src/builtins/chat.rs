@@ -11,7 +11,7 @@ use tracing::{error, info};
 use aura_agent::agent_runner::{AgentRunner, AgentRunnerConfig};
 use aura_agent::prompts::ProjectInfo;
 use aura_reasoner::{Message, ModelProvider};
-use aura_tools::definitions::agent_tool_definitions;
+use aura_tools::catalog::{ToolCatalog, ToolProfile};
 use aura_tools::domain_tools::{DomainApi, MessageDescriptor, SaveMessageParams};
 
 use crate::context::TickContext;
@@ -24,6 +24,7 @@ pub struct ChatAutomaton {
     domain: Arc<dyn DomainApi>,
     provider: Arc<dyn ModelProvider>,
     runner: AgentRunner,
+    catalog: Arc<ToolCatalog>,
 }
 
 impl ChatAutomaton {
@@ -31,11 +32,13 @@ impl ChatAutomaton {
         domain: Arc<dyn DomainApi>,
         provider: Arc<dyn ModelProvider>,
         config: AgentRunnerConfig,
+        catalog: Arc<ToolCatalog>,
     ) -> Self {
         Self {
             domain,
             provider,
             runner: AgentRunner::new(config),
+            catalog,
         }
     }
 }
@@ -127,7 +130,7 @@ impl Automaton for ChatAutomaton {
         };
 
         let api_messages = convert_descriptors_to_messages(&stored);
-        let tools = agent_tool_definitions().to_vec();
+        let tools = self.catalog.tools_for_profile(ToolProfile::Agent);
 
         // ------------------------------------------------------------------
         // 3. Run agent loop

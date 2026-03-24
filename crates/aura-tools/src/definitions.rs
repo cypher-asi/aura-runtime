@@ -83,7 +83,7 @@ fn strip_property_descriptions(mut schema: serde_json::Value) -> serde_json::Val
 // Core tools (filesystem, shell, search)
 // ============================================================================
 
-fn core_tool_definitions() -> Vec<ToolDefinition> {
+pub(crate) fn core_tool_definitions() -> Vec<ToolDefinition> {
     let mut tools = filesystem_tools();
     tools.extend(shell_tools());
     tools.extend(search_tools());
@@ -225,7 +225,7 @@ fn chat_tool_definitions_inner() -> Vec<ToolDefinition> {
     tools
 }
 
-fn chat_management_tools() -> Vec<ToolDefinition> {
+pub(crate) fn chat_management_tools() -> Vec<ToolDefinition> {
     let mut tools = spec_tool_definitions();
     tools.extend(task_tool_definitions());
     tools.extend(project_tool_definitions());
@@ -279,7 +279,7 @@ fn engine_tool_definitions_inner() -> Vec<ToolDefinition> {
     tools
 }
 
-fn engine_specific_tools() -> Vec<ToolDefinition> {
+pub(crate) fn engine_specific_tools() -> Vec<ToolDefinition> {
     vec![
         tool(
             "task_done",

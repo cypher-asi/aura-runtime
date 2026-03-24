@@ -1,7 +1,7 @@
 //! Tool installation and management endpoints.
 
 use aura_core::InstalledToolDefinition;
-use aura_tools::ToolInstaller;
+use aura_tools::ToolCatalog;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -23,21 +23,21 @@ struct ToolListEntry {
 
 /// POST /tools/install -- install or replace a tool definition.
 pub async fn install_tool_handler(
-    State(installer): State<Arc<ToolInstaller>>,
+    State(catalog): State<Arc<ToolCatalog>>,
     Json(def): Json<InstalledToolDefinition>,
 ) -> impl IntoResponse {
     let name = def.name.clone();
-    installer.install(def);
+    catalog.install(def);
     info!(tool = %name, "Tool installed via API");
     (StatusCode::OK, Json(serde_json::json!({ "installed": name })))
 }
 
 /// DELETE /tools/:name -- uninstall a tool by name.
 pub async fn delete_tool_handler(
-    State(installer): State<Arc<ToolInstaller>>,
+    State(catalog): State<Arc<ToolCatalog>>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    if installer.uninstall(&name) {
+    if catalog.uninstall(&name) {
         info!(tool = %name, "Tool uninstalled via API");
         (
             StatusCode::OK,
@@ -53,10 +53,10 @@ pub async fn delete_tool_handler(
 
 /// GET /tools -- list all installed tools (no auth secrets).
 pub async fn get_tools_handler(
-    State(installer): State<Arc<ToolInstaller>>,
+    State(catalog): State<Arc<ToolCatalog>>,
 ) -> impl IntoResponse {
-    let tools: Vec<ToolListEntry> = installer
-        .snapshot()
+    let tools: Vec<ToolListEntry> = catalog
+        .installed_snapshot()
         .into_iter()
         .map(|def| ToolListEntry {
             name: def.name,

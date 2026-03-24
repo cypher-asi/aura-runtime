@@ -13,7 +13,7 @@ use aura_agent::agent_runner::{
 };
 use aura_agent::prompts::{ProjectInfo, SessionInfo, SpecInfo, TaskInfo};
 use aura_reasoner::ModelProvider;
-use aura_tools::definitions::engine_tool_definitions;
+use aura_tools::catalog::{ToolCatalog, ToolProfile};
 use aura_tools::domain_tools::{DomainApi, TaskDescriptor};
 
 use crate::context::TickContext;
@@ -68,6 +68,7 @@ pub struct DevLoopAutomaton {
     domain: Arc<dyn DomainApi>,
     provider: Arc<dyn ModelProvider>,
     runner: AgentRunner,
+    catalog: Arc<ToolCatalog>,
 }
 
 impl DevLoopAutomaton {
@@ -75,11 +76,13 @@ impl DevLoopAutomaton {
         domain: Arc<dyn DomainApi>,
         provider: Arc<dyn ModelProvider>,
         config: AgentRunnerConfig,
+        catalog: Arc<ToolCatalog>,
     ) -> Self {
         Self {
             domain,
             provider,
             runner: AgentRunner::new(config),
+            catalog,
         }
     }
 }
@@ -287,7 +290,7 @@ impl DevLoopAutomaton {
             summary_of_previous_context: "",
         };
         let work_log: Vec<String> = ctx.state.get(STATE_WORK_LOG).unwrap_or_default();
-        let tools = engine_tool_definitions().to_vec();
+        let tools = self.catalog.tools_for_profile(ToolProfile::Engine);
 
         let params = AgenticTaskParams {
             project: &project_info,

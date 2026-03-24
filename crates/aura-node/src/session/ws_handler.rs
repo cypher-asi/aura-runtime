@@ -9,7 +9,8 @@ use crate::protocol::{
 use aura_agent::{AgentLoop, AgentLoopEvent, AgentLoopResult, KernelToolExecutor};
 use aura_executor::ExecutorRouter;
 use aura_reasoner::Message;
-use aura_tools::{DefaultToolRegistry, ToolExecutor, ToolRegistry};
+use aura_tools::catalog::ToolProfile;
+use aura_tools::ToolResolver;
 use axum::extract::ws::{Message as WsMessage, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -198,11 +199,9 @@ fn handle_session_init(
         return;
     }
 
-    let builtin_tools = DefaultToolRegistry::new();
-    session.tool_definitions = builtin_tools.list();
-
-    let harness_defs = ctx.tool_installer.definitions();
-    session.tool_definitions.extend(harness_defs);
+    session.tool_definitions =
+        ctx.catalog
+            .visible_tools(ToolProfile::Core, &ctx.tool_config);
 
     for tool in &session.installed_tools {
         session
@@ -213,21 +212,6 @@ fn handle_session_init(
                 tool.input_schema.clone(),
             ));
     }
-
-    session.tool_definitions.retain(|t| {
-        if !ctx.tool_config.enable_commands && t.name == "run_command" {
-            return false;
-        }
-        if !ctx.tool_config.enable_fs
-            && matches!(
-                t.name.as_str(),
-                "read_file" | "write_file" | "list_files" | "search_code"
-            )
-        {
-            return false;
-        }
-        true
-    });
 
     let tools: Vec<ToolInfo> = session
         .tool_definitions
@@ -277,25 +261,24 @@ fn start_turn(
 
     session.messages.push(Message::user(&msg.content));
 
-    let mut tool_executor = ToolExecutor::new(ctx.tool_config.clone());
+    let mut resolver = ToolResolver::new(ctx.catalog.clone(), ctx.tool_config.clone());
 
-    let harness_tools = ctx.tool_installer.snapshot();
-    for mut tool_def in harness_tools {
+    for mut tool_def in ctx.catalog.installed_snapshot() {
         if let Some(ref jwt) = session.auth_token {
             tool_def.auth = aura_core::ToolAuth::Bearer { token: jwt.clone() };
         }
-        if let Err(e) = tool_executor.register_installed(tool_def.clone()) {
+        if let Err(e) = resolver.register_installed(tool_def.clone()) {
             tracing::warn!(tool = %tool_def.name, error = %e, "Failed to register harness tool");
         }
     }
 
     for tool in &session.installed_tools {
-        if let Err(e) = tool_executor.register_installed(tool.clone()) {
+        if let Err(e) = resolver.register_installed(tool.clone()) {
             tracing::warn!(tool = %tool.name, error = %e, "Failed to register installed tool");
         }
     }
     let mut executor_router = ExecutorRouter::new();
-    executor_router.add_executor(Arc::new(tool_executor));
+    executor_router.add_executor(Arc::new(resolver));
 
     let workspace = session.workspace.join(session.agent_id.to_hex());
     let kernel_executor = KernelToolExecutor::new(executor_router, session.agent_id, workspace);

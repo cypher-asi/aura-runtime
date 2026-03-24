@@ -29,7 +29,8 @@ use aura_node::router::{create_router, RouterState};
 use aura_node::scheduler::Scheduler;
 use aura_reasoner::{AnthropicConfig, AnthropicProvider, MockProvider, ModelProvider};
 use aura_store::RocksStore;
-use aura_tools::{DefaultToolRegistry, ToolConfig, ToolExecutor, ToolInstaller, ToolRegistry};
+use aura_tools::catalog::ToolProfile;
+use aura_tools::{ToolCatalog, ToolConfig, ToolResolver};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -133,12 +134,11 @@ impl TestServer {
             command_allowlist: vec![],
             ..Default::default()
         };
-        let tool_executor: Arc<dyn Executor> = Arc::new(ToolExecutor::new(tool_config.clone()));
-        let executors = vec![tool_executor];
-
-        let tool_registry = DefaultToolRegistry::new();
-        let tools = tool_registry.list();
-        let tool_installer = Arc::new(ToolInstaller::new());
+        let catalog = Arc::new(ToolCatalog::new());
+        let tools = catalog.visible_tools(ToolProfile::Core, &tool_config);
+        let resolver: Arc<dyn Executor> =
+            Arc::new(ToolResolver::new(catalog.clone(), tool_config.clone()));
+        let executors = vec![resolver];
 
         let provider: Arc<dyn ModelProvider + Send + Sync> =
             provider_override.unwrap_or_else(create_provider);
@@ -157,7 +157,7 @@ impl TestServer {
             config,
             provider,
             tool_config,
-            tool_installer,
+            catalog,
         };
         let app = create_router(state);
 

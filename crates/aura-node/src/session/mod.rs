@@ -11,7 +11,7 @@ use crate::protocol::{self, SessionInit};
 use aura_agent::{prompts::default_system_prompt, AgentLoopConfig};
 use aura_core::{AgentId, InstalledToolDefinition};
 use aura_reasoner::{Message, ModelProvider, ToolDefinition};
-use aura_tools::{ToolConfig, ToolInstaller};
+use aura_tools::{ToolCatalog, ToolConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -178,6 +178,6 @@ pub struct WsContext {
     pub tool_config: ToolConfig,
     /// JWT auth token from the WebSocket upgrade request.
     pub auth_token: Option<String>,
-    /// Harness-level tool installer (shared across sessions).
-    pub tool_installer: Arc<ToolInstaller>,
+    /// Canonical tool catalog (shared across sessions).
+    pub catalog: Arc<ToolCatalog>,
 }

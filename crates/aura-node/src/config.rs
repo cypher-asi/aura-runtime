@@ -47,7 +47,7 @@ impl Default for NodeConfig {
             enable_fs_tools: true,
             enable_cmd_tools: false,
             allowed_commands: vec![],
-            tools_config_path: None,
+            tools_config_path: Some("tools.toml".to_string()),
             orbit_url: "https://orbit-sfvu.onrender.com".to_string(),
             aura_storage_url: "https://aura-storage.onrender.com".to_string(),
             aura_network_url: "https://aura-network.onrender.com".to_string(),
@@ -163,7 +163,7 @@ mod tests {
         assert!(config.enable_fs_tools);
         assert!(!config.enable_cmd_tools);
         assert!(config.allowed_commands.is_empty());
-        assert!(config.tools_config_path.is_none());
+        assert_eq!(config.tools_config_path.as_deref(), Some("tools.toml"));
         assert_eq!(config.orbit_url, "https://orbit-sfvu.onrender.com");
         assert_eq!(config.aura_storage_url, "https://aura-storage.onrender.com");
         assert_eq!(config.aura_network_url, "https://aura-network.onrender.com");

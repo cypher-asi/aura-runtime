@@ -7,7 +7,7 @@ use crate::session::{handle_ws_connection, WsContext};
 use aura_core::{AgentId, Transaction, TransactionType};
 use aura_reasoner::ModelProvider;
 use aura_store::Store;
-use aura_tools::{ToolConfig, ToolInstaller};
+use aura_tools::{ToolCatalog, ToolConfig};
 use axum::{
     extract::{ws::WebSocketUpgrade, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -30,8 +30,8 @@ pub struct RouterState {
     pub provider: Arc<dyn ModelProvider + Send + Sync>,
     /// Tool configuration for WebSocket sessions.
     pub tool_config: ToolConfig,
-    /// Harness-level tool installer (shared across sessions).
-    pub tool_installer: Arc<ToolInstaller>,
+    /// Canonical tool catalog (shared across sessions).
+    pub catalog: Arc<ToolCatalog>,
 }
 
 impl Clone for RouterState {
@@ -42,7 +42,7 @@ impl Clone for RouterState {
             config: self.config.clone(),
             provider: self.provider.clone(),
             tool_config: self.tool_config.clone(),
-            tool_installer: self.tool_installer.clone(),
+            catalog: self.catalog.clone(),
         }
     }
 }
@@ -53,7 +53,7 @@ pub fn create_router(state: RouterState) -> Router {
         .route("/tools/install", post(api::install_tool_handler))
         .route("/tools/:name", delete(api::delete_tool_handler))
         .route("/tools", get(api::get_tools_handler))
-        .with_state(state.tool_installer.clone());
+        .with_state(state.catalog.clone());
 
     let service_clients = Arc::new(api::ServiceClients {
         http: reqwest::Client::new(),
@@ -290,7 +290,7 @@ async fn ws_upgrade_handler(
         provider: state.provider.clone(),
         tool_config: state.tool_config.clone(),
         auth_token,
-        tool_installer: state.tool_installer.clone(),
+        catalog: state.catalog.clone(),
     };
     ws.on_upgrade(move |socket| handle_ws_connection(socket, ctx))
 }
@@ -321,7 +321,7 @@ mod tests {
             config: NodeConfig::default(),
             provider,
             tool_config: ToolConfig::default(),
-            tool_installer: Arc::new(ToolInstaller::new()),
+            catalog: Arc::new(ToolCatalog::new()),
         }
     }
 
