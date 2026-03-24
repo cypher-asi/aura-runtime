@@ -42,6 +42,8 @@ pub struct TaskDescriptor {
     pub status: String,
     #[serde(alias = "dependencyIds", alias = "dependency_ids", default)]
     pub dependencies: Vec<String>,
+    #[serde(alias = "orderIndex", alias = "order_index", default, deserialize_with = "super::helpers::deser_u32_or_default")]
+    pub order: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +152,7 @@ pub trait DomainApi: Send + Sync {
         title: &str,
         description: &str,
         dependencies: &[String],
+        order: u32,
         jwt: Option<&str>,
     ) -> anyhow::Result<TaskDescriptor>;
     async fn update_task(

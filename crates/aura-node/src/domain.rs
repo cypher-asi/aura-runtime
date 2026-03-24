@@ -270,6 +270,7 @@ impl DomainApi for HttpDomainApi {
         title: &str,
         description: &str,
         dependencies: &[String],
+        order: u32,
         jwt: Option<&str>,
     ) -> anyhow::Result<TaskDescriptor> {
         let jwt = Self::require_jwt(jwt)?;
@@ -279,6 +280,7 @@ impl DomainApi for HttpDomainApi {
             "title": title,
             "description": description,
             "dependencyTaskIds": dependencies,
+            "orderIndex": order,
         });
         self.api_post(&url, &body, jwt).await
     }

@@ -54,7 +54,13 @@ pub async fn create_task(api: &dyn DomainApi, project_id: &str, input: &Value) -
     let deps = str_array(input, "dependency_ids");
     let jwt = str_field(input, "jwt");
 
-    match api.create_task(project_id, &spec_id, &title, &description, &deps, jwt.as_deref()).await {
+    // Auto-derive orderIndex from existing task count within this spec.
+    let order = match api.list_tasks(project_id, Some(&spec_id), jwt.as_deref()).await {
+        Ok(tasks) => tasks.len() as u32,
+        Err(_) => 0,
+    };
+
+    match api.create_task(project_id, &spec_id, &title, &description, &deps, order, jwt.as_deref()).await {
         Ok(t) => json!({ "ok": true, "task": t }).to_string(),
         Err(e) => json!({ "ok": false, "error": e.to_string() }).to_string(),
     }
