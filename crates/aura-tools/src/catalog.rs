@@ -142,7 +142,12 @@ impl ToolCatalog {
             .map(|e| e.definition.clone())
             .collect();
 
-        tools.extend(self.installed_definitions());
+        let static_names: HashSet<String> = tools.iter().map(|t| t.name.clone()).collect();
+        for def in self.installed_definitions() {
+            if !static_names.contains(&def.name) {
+                tools.push(def);
+            }
+        }
         tools
     }
 
