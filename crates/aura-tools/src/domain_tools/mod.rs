@@ -36,6 +36,9 @@ pub struct DomainToolExecutor {
     api: Arc<dyn DomainApi>,
     /// Per-session JWT for orbit/network calls that need user auth.
     session_jwt: Option<String>,
+    /// Per-session project ID; used as fallback when the LLM tool call args
+    /// do not include `project_id` (single-project mode).
+    session_project_id: Option<String>,
 }
 
 impl DomainToolExecutor {
@@ -43,6 +46,7 @@ impl DomainToolExecutor {
         Self {
             api,
             session_jwt: None,
+            session_project_id: None,
         }
     }
 
@@ -51,6 +55,23 @@ impl DomainToolExecutor {
         Self {
             api,
             session_jwt: jwt,
+            session_project_id: None,
+        }
+    }
+
+    /// Create an executor with both session JWT and project ID context.
+    ///
+    /// In single-project mode the LLM tool schemas omit `project_id`, so
+    /// the session-level value is used as a fallback.
+    pub fn with_session_context(
+        api: Arc<dyn DomainApi>,
+        jwt: Option<String>,
+        project_id: Option<String>,
+    ) -> Self {
+        Self {
+            api,
+            session_jwt: jwt,
+            session_project_id: project_id,
         }
     }
 
@@ -65,12 +86,24 @@ impl DomainToolExecutor {
         patched
     }
 
+    /// Resolve the effective project ID: prefer the explicit arg from the tool
+    /// call, fall back to the session-level ID.
+    fn effective_project_id<'a>(&'a self, from_args: &'a str) -> &'a str {
+        if from_args.is_empty() {
+            self.session_project_id.as_deref().unwrap_or_default()
+        } else {
+            from_args
+        }
+    }
+
     /// Execute a domain tool by name.
     ///
-    /// `project_id` is threaded through from the session context.
+    /// `project_id` is threaded through from the resolver (extracted from tool
+    /// call args).  When empty, the session-level project ID is used instead.
     /// The session JWT is injected into `input` so handlers can forward it.
     /// Returns a JSON string result (always contains an `ok` field).
     pub async fn execute(&self, tool_name: &str, project_id: &str, input: &Value) -> String {
+        let project_id = self.effective_project_id(project_id);
         let input = self.inject_jwt(input);
         match tool_name {
             // Specs

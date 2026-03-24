@@ -264,9 +264,10 @@ fn start_turn(
 
     if let Some(ref domain_api) = ctx.domain_api {
         use aura_tools::domain_tools::DomainToolExecutor;
-        let domain_exec = Arc::new(DomainToolExecutor::with_session_jwt(
+        let domain_exec = Arc::new(DomainToolExecutor::with_session_context(
             domain_api.clone(),
             session.auth_token.clone(),
+            session.project_id.clone(),
         ));
         resolver = resolver.with_domain_executor(domain_exec);
     }
