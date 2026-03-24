@@ -13,29 +13,44 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpecDescriptor {
+    #[serde(alias = "spec_id")]
     pub id: String,
+    #[serde(alias = "projectId", default, deserialize_with = "super::helpers::deser_string_or_default")]
     pub project_id: String,
+    #[serde(default, deserialize_with = "super::helpers::deser_string_or_default")]
     pub title: String,
+    #[serde(alias = "markdownContents", alias = "markdown_contents", default, deserialize_with = "super::helpers::deser_string_or_default")]
     pub content: String,
+    #[serde(alias = "orderIndex", alias = "order_index", default, deserialize_with = "super::helpers::deser_u32_or_default")]
     pub order: u32,
+    #[serde(alias = "parentId", default)]
     pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDescriptor {
     pub id: String,
+    #[serde(alias = "specId", default, deserialize_with = "super::helpers::deser_string_or_default")]
     pub spec_id: String,
+    #[serde(alias = "projectId", default, deserialize_with = "super::helpers::deser_string_or_default")]
     pub project_id: String,
+    #[serde(default, deserialize_with = "super::helpers::deser_string_or_default")]
     pub title: String,
+    #[serde(default, deserialize_with = "super::helpers::deser_string_or_default")]
     pub description: String,
+    #[serde(default, deserialize_with = "super::helpers::deser_string_or_default")]
     pub status: String,
+    #[serde(alias = "dependencyIds", alias = "dependency_ids", default)]
     pub dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectDescriptor {
+    #[serde(alias = "project_id")]
     pub id: String,
+    #[serde(default)]
     pub name: String,
+    #[serde(alias = "linked_folder_path", default)]
     pub path: String,
     pub description: Option<String>,
     pub tech_stack: Option<String>,
