@@ -30,6 +30,7 @@ const STATE_FAILED_COUNT: &str = "failed_count";
 const STATE_WORK_LOG: &str = "work_log";
 const STATE_RETRY_COUNTS: &str = "retry_counts";
 const STATE_LOOP_FINISHED: &str = "loop_finished";
+const STATE_TASKS_READIED: &str = "tasks_readied";
 
 const MAX_RETRIES_PER_TASK: u32 = 2;
 
@@ -158,14 +159,40 @@ impl Automaton for DevLoopAutomaton {
             .unwrap_or(cfg.agent_instance_id.clone());
 
         // ------------------------------------------------------------------
+        // 0. On first tick, transition pending tasks to ready
+        // ------------------------------------------------------------------
+        let already_readied: bool = ctx.state.get(STATE_TASKS_READIED).unwrap_or(false);
+        if !already_readied {
+            if let Ok(tasks) = self.domain.list_tasks(&project_id, None, None).await {
+                let pending: Vec<_> = tasks.iter().filter(|t| t.status == "pending").collect();
+                if !pending.is_empty() {
+                    info!(count = pending.len(), "Transitioning pending tasks to ready");
+                    for t in &pending {
+                        if let Err(e) = self.domain.transition_task(&t.id, "ready", None).await {
+                            warn!(task_id = %t.id, error = %e, "Failed to transition task to ready");
+                        }
+                    }
+                }
+                let ready_count = tasks.iter().filter(|t| t.status == "ready").count() + pending.len();
+                info!(ready_count, total = tasks.len(), "Task readiness check complete");
+            }
+            ctx.state.set(STATE_TASKS_READIED, &true);
+        }
+
+        // ------------------------------------------------------------------
         // 1. Claim next task
         // ------------------------------------------------------------------
         let task = match self.domain.claim_next_task(&project_id, &agent_id, None).await {
-            Ok(Some(t)) => t,
+            Ok(Some(t)) => {
+                info!(task_id = %t.id, title = %t.title, "Claimed task");
+                t
+            }
             Ok(None) => {
+                info!("No ready tasks to claim, checking for retries");
                 if self.try_retry_failed(ctx, &project_id).await? {
                     return Ok(TickOutcome::Continue);
                 }
+                info!("No tasks remaining, finishing loop");
                 return self.finish(ctx).await;
             }
             Err(e) => {
