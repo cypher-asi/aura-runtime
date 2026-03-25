@@ -159,22 +159,38 @@ impl Automaton for DevLoopAutomaton {
             .unwrap_or(cfg.agent_instance_id.clone());
 
         // ------------------------------------------------------------------
-        // 0. On first tick, transition pending tasks to ready
+        // 0. On first tick, resolve initial task readiness (dependency-aware)
         // ------------------------------------------------------------------
         let already_readied: bool = ctx.state.get(STATE_TASKS_READIED).unwrap_or(false);
         if !already_readied {
             if let Ok(tasks) = self.domain.list_tasks(&project_id, None, None).await {
-                let pending: Vec<_> = tasks.iter().filter(|t| t.status == "pending").collect();
-                if !pending.is_empty() {
-                    info!(count = pending.len(), "Transitioning pending tasks to ready");
-                    for t in &pending {
+                let done_ids: std::collections::HashSet<&str> = tasks
+                    .iter()
+                    .filter(|t| t.status == "done")
+                    .map(|t| t.id.as_str())
+                    .collect();
+
+                let promotable: Vec<_> = tasks
+                    .iter()
+                    .filter(|t| t.status == "pending")
+                    .filter(|t| {
+                        t.dependencies.is_empty()
+                            || t.dependencies.iter().all(|dep| done_ids.contains(dep.as_str()))
+                    })
+                    .collect();
+
+                if !promotable.is_empty() {
+                    info!(count = promotable.len(), "Transitioning dependency-satisfied tasks to ready");
+                    for t in &promotable {
                         if let Err(e) = self.domain.transition_task(&t.id, "ready", None).await {
                             warn!(task_id = %t.id, error = %e, "Failed to transition task to ready");
                         }
                     }
                 }
-                let ready_count = tasks.iter().filter(|t| t.status == "ready").count() + pending.len();
-                info!(ready_count, total = tasks.len(), "Task readiness check complete");
+
+                let ready_count = tasks.iter().filter(|t| t.status == "ready").count() + promotable.len();
+                let pending_count = tasks.iter().filter(|t| t.status == "pending").count() - promotable.len();
+                info!(ready_count, pending_count, total = tasks.len(), "Task readiness check complete");
             }
             ctx.state.set(STATE_TASKS_READIED, &true);
         }
@@ -220,6 +236,8 @@ impl Automaton for DevLoopAutomaton {
                     .transition_task(&task.id, "done", None)
                     .await
                     .map_err(|e| AutomatonError::DomainApi(e.to_string()))?;
+
+                self.resolve_dependencies(ctx, &project_id, &task.id).await;
 
                 let completed: u32 = ctx.state.get(STATE_COMPLETED_COUNT).unwrap_or(0) + 1;
                 ctx.state.set(STATE_COMPLETED_COUNT, &completed);
@@ -451,6 +469,46 @@ impl DevLoopAutomaton {
 
         ctx.state.set(STATE_RETRY_COUNTS, &retry_counts);
         Ok(true)
+    }
+
+    /// After a task completes, check if any pending tasks now have all
+    /// dependencies satisfied and transition them to ready.
+    async fn resolve_dependencies(
+        &self,
+        ctx: &TickContext,
+        project_id: &str,
+        completed_task_id: &str,
+    ) {
+        let tasks = match self.domain.list_tasks(project_id, None, None).await {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(error = %e, "Failed to list tasks for dependency resolution");
+                return;
+            }
+        };
+
+        let done_ids: std::collections::HashSet<&str> = tasks
+            .iter()
+            .filter(|t| t.status == "done")
+            .map(|t| t.id.as_str())
+            .collect();
+
+        let newly_ready: Vec<_> = tasks
+            .iter()
+            .filter(|t| t.status == "pending")
+            .filter(|t| t.dependencies.contains(&completed_task_id.to_string()))
+            .filter(|t| t.dependencies.iter().all(|dep| done_ids.contains(dep.as_str())))
+            .collect();
+
+        for t in &newly_ready {
+            info!(task_id = %t.id, title = %t.title, "Dependencies satisfied, promoting to ready");
+            if let Err(e) = self.domain.transition_task(&t.id, "ready", None).await {
+                warn!(task_id = %t.id, error = %e, "Failed to transition newly-ready task");
+            }
+            ctx.emit(AutomatonEvent::LogLine {
+                message: format!("Task '{}' is now ready (dependencies met)", t.title),
+            });
+        }
     }
 
     async fn finish(&self, ctx: &mut TickContext) -> Result<TickOutcome, AutomatonError> {
