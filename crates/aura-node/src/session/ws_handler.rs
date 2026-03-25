@@ -279,6 +279,7 @@ fn start_turn(
             controller.clone(),
             project_id,
             workspace_root,
+            session.auth_token.clone(),
         ) {
             resolver.register(tool);
         }

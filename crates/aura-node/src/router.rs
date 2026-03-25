@@ -2,6 +2,7 @@
 
 use crate::config::NodeConfig;
 use crate::scheduler::Scheduler;
+use crate::automaton_bridge::AutomatonBridge;
 use crate::session::{handle_ws_connection, WsContext};
 use aura_core::{AgentId, Transaction, TransactionType};
 use aura_reasoner::ModelProvider;
@@ -37,6 +38,8 @@ pub struct RouterState {
     pub domain_api: Option<Arc<dyn DomainApi>>,
     /// Automaton controller for dev-loop lifecycle (None when domain API unavailable).
     pub automaton_controller: Option<Arc<dyn AutomatonController>>,
+    /// Concrete bridge for event subscription (same object as automaton_controller).
+    pub automaton_bridge: Option<Arc<AutomatonBridge>>,
 }
 
 impl Clone for RouterState {
@@ -50,6 +53,7 @@ impl Clone for RouterState {
             catalog: self.catalog.clone(),
             domain_api: self.domain_api.clone(),
             automaton_controller: self.automaton_controller.clone(),
+            automaton_bridge: self.automaton_bridge.clone(),
         }
     }
 }
@@ -62,6 +66,10 @@ pub fn create_router(state: RouterState) -> Router {
         .route("/agents/:agent_id/head", get(get_head_handler))
         .route("/agents/:agent_id/record", get(scan_record_handler))
         .route("/stream", get(ws_upgrade_handler))
+        .route(
+            "/stream/automaton/:automaton_id",
+            get(automaton_ws_handler),
+        )
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
@@ -250,6 +258,74 @@ async fn ws_upgrade_handler(
     ws.on_upgrade(move |socket| handle_ws_connection(socket, ctx))
 }
 
+/// WebSocket endpoint for streaming automaton events.
+///
+/// Clients connect to `/stream/automaton/:automaton_id` to receive real-time
+/// events from a running automaton (dev loop, task run, etc.).
+async fn automaton_ws_handler(
+    ws: WebSocketUpgrade,
+    Path(automaton_id): Path<String>,
+    State(state): State<RouterState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| {
+        handle_automaton_ws(socket, automaton_id, state.automaton_bridge)
+    })
+}
+
+async fn handle_automaton_ws(
+    socket: axum::extract::ws::WebSocket,
+    automaton_id: String,
+    bridge: Option<Arc<AutomatonBridge>>,
+) {
+    use axum::extract::ws::Message as WsMessage;
+    use futures_util::{SinkExt, StreamExt};
+
+    let (mut ws_tx, _ws_rx) = socket.split();
+
+    let bridge = match bridge {
+        Some(b) => b,
+        None => {
+            let msg = serde_json::json!({"type": "error", "message": "automaton controller unavailable"}).to_string();
+            let _: Result<(), _> = ws_tx.send(WsMessage::Text(msg)).await;
+            return;
+        }
+    };
+
+    let mut rx = match bridge.subscribe_events(&automaton_id) {
+        Some(rx) => rx,
+        None => {
+            let msg = serde_json::json!({"type": "error", "message": format!("automaton {automaton_id} not found or already finished")}).to_string();
+            let _: Result<(), _> = ws_tx.send(WsMessage::Text(msg)).await;
+            return;
+        }
+    };
+
+    info!(automaton_id = %automaton_id, "Automaton event stream connected");
+
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                let is_done = matches!(event, aura_automaton::AutomatonEvent::Done);
+                if let Ok(json) = serde_json::to_string(&event) {
+                    if ws_tx.send(WsMessage::Text(json)).await.is_err() {
+                        break;
+                    }
+                }
+                if is_done {
+                    break;
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                let msg = serde_json::json!({"type": "warning", "message": format!("dropped {n} events (client too slow)")});
+                let _ = ws_tx.send(WsMessage::Text(msg.to_string())).await;
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
+    }
+
+    info!(automaton_id = %automaton_id, "Automaton event stream disconnected");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +355,7 @@ mod tests {
             catalog: Arc::new(ToolCatalog::new()),
             domain_api: None,
             automaton_controller: None,
+            automaton_bridge: None,
         }
     }
 

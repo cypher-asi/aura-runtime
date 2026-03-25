@@ -107,15 +107,18 @@ impl Node {
         info!("Scheduler ready");
 
         let automaton_runtime = Arc::new(AutomatonRuntime::new());
-        let automaton_controller: Option<Arc<dyn AutomatonController>> =
+        let automaton_bridge: Option<Arc<AutomatonBridge>> =
             domain_api.as_ref().map(|api| {
                 Arc::new(AutomatonBridge::new(
                     automaton_runtime.clone(),
                     api.clone(),
                     provider.clone(),
                     catalog.clone(),
-                )) as Arc<dyn AutomatonController>
+                    tool_config.clone(),
+                ))
             });
+        let automaton_controller: Option<Arc<dyn AutomatonController>> =
+            automaton_bridge.clone().map(|b| b as Arc<dyn AutomatonController>);
         if automaton_controller.is_some() {
             info!("Automaton runtime ready");
         }
@@ -129,6 +132,7 @@ impl Node {
             catalog,
             domain_api,
             automaton_controller,
+            automaton_bridge,
         };
         let app = create_router(state);
 

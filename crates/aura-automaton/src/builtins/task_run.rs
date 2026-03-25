@@ -26,6 +26,7 @@ pub struct TaskRunAutomaton {
     provider: Arc<dyn ModelProvider>,
     runner: AgentRunner,
     catalog: Arc<ToolCatalog>,
+    tool_executor: Option<Arc<dyn aura_agent::types::AgentToolExecutor>>,
 }
 
 impl TaskRunAutomaton {
@@ -40,7 +41,18 @@ impl TaskRunAutomaton {
             provider,
             runner: AgentRunner::new(config),
             catalog,
+            tool_executor: None,
         }
+    }
+
+    /// Attach a real tool executor for filesystem/command operations.
+    #[must_use]
+    pub fn with_tool_executor(
+        mut self,
+        executor: Arc<dyn aura_agent::types::AgentToolExecutor>,
+    ) -> Self {
+        self.tool_executor = Some(executor);
+        self
     }
 }
 
@@ -198,8 +210,12 @@ impl Automaton for TaskRunAutomaton {
 
         let cancel = ctx.cancellation_token().clone();
 
+        let inner_executor: Arc<dyn aura_agent::types::AgentToolExecutor> = self
+            .tool_executor
+            .clone()
+            .unwrap_or_else(|| Arc::new(NoOpExecutor));
         let executor = aura_agent::task_executor::TaskToolExecutor {
-            inner: Arc::new(NoOpExecutor),
+            inner: inner_executor,
             project_folder: project.path.clone(),
             build_command: project.build_command.clone(),
             task_context: String::new(),

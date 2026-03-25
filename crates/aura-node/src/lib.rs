@@ -25,6 +25,7 @@
 pub mod automaton_bridge;
 mod config;
 pub mod domain;
+pub mod jwt_domain;
 mod node;
 pub mod protocol;
 pub mod router;

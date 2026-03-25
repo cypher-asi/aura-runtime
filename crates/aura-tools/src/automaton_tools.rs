@@ -29,6 +29,8 @@ pub trait AutomatonController: Send + Sync {
         &self,
         project_id: &str,
         workspace_root: Option<PathBuf>,
+        auth_token: Option<String>,
+        model: Option<String>,
     ) -> Result<String, String>;
 
     /// Pause the running dev-loop for `project_id`.
@@ -37,13 +39,15 @@ pub trait AutomatonController: Send + Sync {
     /// Stop (cancel) the running dev-loop for `project_id`.
     async fn stop_dev_loop(&self, project_id: &str) -> Result<(), String>;
 
-    /// Execute a single task through the dev-loop engine.
-    /// Returns a short summary on success.
+    /// Execute a single task through the dev-loop engine (non-blocking).
+    /// Returns the automaton ID immediately.
     async fn run_task(
         &self,
         project_id: &str,
         task_id: &str,
         workspace_root: Option<PathBuf>,
+        auth_token: Option<String>,
+        model: Option<String>,
     ) -> Result<String, String>;
 }
 
@@ -55,6 +59,7 @@ pub struct StartDevLoopTool {
     controller: Arc<dyn AutomatonController>,
     project_id: String,
     workspace_root: Option<PathBuf>,
+    auth_token: Option<String>,
 }
 
 impl StartDevLoopTool {
@@ -62,11 +67,13 @@ impl StartDevLoopTool {
         controller: Arc<dyn AutomatonController>,
         project_id: String,
         workspace_root: Option<PathBuf>,
+        auth_token: Option<String>,
     ) -> Self {
         Self {
             controller,
             project_id,
             workspace_root,
+            auth_token,
         }
     }
 }
@@ -81,7 +88,13 @@ impl Tool for StartDevLoopTool {
         ToolDefinition {
             name: "start_dev_loop".into(),
             description: "Start the autonomous dev loop for the project. It will pick up ready tasks and execute them.".into(),
-            input_schema: serde_json::json!({"type":"object","properties":{},"required":[]}),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "model": { "type": "string", "description": "Optional model override for the loop (e.g. 'claude-sonnet-4-20250514')" }
+                },
+                "required": []
+            }),
             cache_control: None,
         }
     }
@@ -89,16 +102,23 @@ impl Tool for StartDevLoopTool {
     async fn execute(
         &self,
         _ctx: &ToolContext,
-        _args: serde_json::Value,
+        args: serde_json::Value,
     ) -> Result<ToolResult, ToolError> {
+        let model = args.get("model").and_then(|v| v.as_str()).map(String::from);
+
         match self
             .controller
-            .start_dev_loop(&self.project_id, self.workspace_root.clone())
+            .start_dev_loop(
+                &self.project_id,
+                self.workspace_root.clone(),
+                self.auth_token.clone(),
+                model,
+            )
             .await
         {
             Ok(automaton_id) => Ok(ToolResult::success(
                 "start_dev_loop",
-                format!("Dev loop started (automaton_id: {automaton_id})"),
+                format!("Dev loop started (automaton_id: {automaton_id}). Monitor progress via /stream/automaton/{automaton_id}"),
             )),
             Err(e) => Ok(ToolResult::failure("start_dev_loop", e)),
         }
@@ -203,6 +223,7 @@ pub struct RunTaskTool {
     controller: Arc<dyn AutomatonController>,
     project_id: String,
     workspace_root: Option<PathBuf>,
+    auth_token: Option<String>,
 }
 
 impl RunTaskTool {
@@ -210,11 +231,13 @@ impl RunTaskTool {
         controller: Arc<dyn AutomatonController>,
         project_id: String,
         workspace_root: Option<PathBuf>,
+        auth_token: Option<String>,
     ) -> Self {
         Self {
             controller,
             project_id,
             workspace_root,
+            auth_token,
         }
     }
 }
@@ -228,11 +251,12 @@ impl Tool for RunTaskTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "run_task".into(),
-            description: "Trigger execution of a single task by the dev-loop engine.".into(),
+            description: "Start execution of a single task by the dev-loop engine. Returns immediately; monitor progress via the automaton event stream.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "task_id": { "type": "string" }
+                    "task_id": { "type": "string" },
+                    "model": { "type": "string", "description": "Optional model override" }
                 },
                 "required": ["task_id"]
             }),
@@ -248,13 +272,23 @@ impl Tool for RunTaskTool {
         let task_id = args["task_id"]
             .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("missing 'task_id' argument".into()))?;
+        let model = args.get("model").and_then(|v| v.as_str()).map(String::from);
 
         match self
             .controller
-            .run_task(&self.project_id, task_id, self.workspace_root.clone())
+            .run_task(
+                &self.project_id,
+                task_id,
+                self.workspace_root.clone(),
+                self.auth_token.clone(),
+                model,
+            )
             .await
         {
-            Ok(summary) => Ok(ToolResult::success("run_task", summary)),
+            Ok(automaton_id) => Ok(ToolResult::success(
+                "run_task",
+                format!("Task execution started (automaton_id: {automaton_id}). Monitor via /stream/automaton/{automaton_id}"),
+            )),
             Err(e) => Ok(ToolResult::failure("run_task", e)),
         }
     }
@@ -265,12 +299,14 @@ pub fn devloop_control_tools(
     controller: Arc<dyn AutomatonController>,
     project_id: String,
     workspace_root: Option<PathBuf>,
+    auth_token: Option<String>,
 ) -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(StartDevLoopTool::new(
             controller.clone(),
             project_id.clone(),
             workspace_root.clone(),
+            auth_token.clone(),
         )),
         Box::new(PauseDevLoopTool::new(
             controller.clone(),
@@ -280,6 +316,11 @@ pub fn devloop_control_tools(
             controller.clone(),
             project_id.clone(),
         )),
-        Box::new(RunTaskTool::new(controller, project_id, workspace_root)),
+        Box::new(RunTaskTool::new(
+            controller,
+            project_id,
+            workspace_root,
+            auth_token,
+        )),
     ]
 }

@@ -2,20 +2,31 @@
 //! concrete `AutomatonRuntime` + automaton types (from `aura-automaton`).
 //!
 //! This module lives in `aura-node` because it depends on both crates.
+//! It handles: JWT injection, tool executor wiring, event broadcasting,
+//! and non-blocking task execution.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
+use tokio::sync::broadcast;
 use tracing::info;
 
-use aura_automaton::{AutomatonHandle, AutomatonRuntime, DevLoopAutomaton, TaskRunAutomaton};
 use aura_agent::agent_runner::AgentRunnerConfig;
+use aura_agent::KernelToolExecutor;
+use aura_automaton::{AutomatonEvent, AutomatonHandle, AutomatonRuntime, DevLoopAutomaton, TaskRunAutomaton};
+use aura_core::AgentId;
+use aura_executor::ExecutorRouter;
 use aura_reasoner::ModelProvider;
 use aura_tools::automaton_tools::AutomatonController;
 use aura_tools::catalog::ToolCatalog;
-use aura_tools::domain_tools::DomainApi;
+use aura_tools::domain_tools::{DomainApi, DomainToolExecutor};
+use aura_tools::{ToolConfig, ToolResolver};
+
+use crate::jwt_domain::JwtDomainApi;
+
+const EVENT_BROADCAST_CAPACITY: usize = 512;
 
 /// Concrete [`AutomatonController`] wired to the real runtime.
 pub struct AutomatonBridge {
@@ -23,8 +34,11 @@ pub struct AutomatonBridge {
     domain: Arc<dyn DomainApi>,
     provider: Arc<dyn ModelProvider + Send + Sync>,
     catalog: Arc<ToolCatalog>,
+    tool_config: ToolConfig,
     /// project_id -> (automaton_id, handle)
     project_handles: Arc<DashMap<String, (String, AutomatonHandle)>>,
+    /// automaton_id -> broadcast sender for events
+    event_channels: Arc<DashMap<String, broadcast::Sender<AutomatonEvent>>>,
 }
 
 impl AutomatonBridge {
@@ -33,14 +47,94 @@ impl AutomatonBridge {
         domain: Arc<dyn DomainApi>,
         provider: Arc<dyn ModelProvider + Send + Sync>,
         catalog: Arc<ToolCatalog>,
+        tool_config: ToolConfig,
     ) -> Self {
         Self {
             runtime,
             domain,
             provider,
             catalog,
+            tool_config,
             project_handles: Arc::new(DashMap::new()),
+            event_channels: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Subscribe to events for a running automaton.
+    pub fn subscribe_events(
+        &self,
+        automaton_id: &str,
+    ) -> Option<broadcast::Receiver<AutomatonEvent>> {
+        self.event_channels
+            .get(automaton_id)
+            .map(|entry| entry.value().subscribe())
+    }
+
+    /// Wrap domain API with JWT injection when an auth token is available.
+    fn domain_with_jwt(&self, auth_token: Option<&str>) -> Arc<dyn DomainApi> {
+        match auth_token {
+            Some(token) if !token.is_empty() => {
+                Arc::new(JwtDomainApi::new(self.domain.clone(), token.to_string()))
+            }
+            _ => self.domain.clone(),
+        }
+    }
+
+    /// Build a `KernelToolExecutor` that automatons use for file/command tools.
+    fn build_tool_executor(
+        &self,
+        domain: Arc<dyn DomainApi>,
+        auth_token: Option<&str>,
+        workspace: &std::path::Path,
+    ) -> Arc<KernelToolExecutor> {
+        let mut resolver = ToolResolver::new(self.catalog.clone(), self.tool_config.clone());
+        let domain_exec = Arc::new(DomainToolExecutor::with_session_jwt(
+            domain,
+            auth_token.map(String::from),
+        ));
+        resolver = resolver.with_domain_executor(domain_exec);
+
+        let mut router = ExecutorRouter::new();
+        router.add_executor(Arc::new(resolver));
+
+        Arc::new(KernelToolExecutor::new(
+            router,
+            AgentId::generate(),
+            workspace.to_path_buf(),
+        ))
+    }
+
+    /// Spawn a background task that forwards `mpsc` events to a `broadcast` channel.
+    fn spawn_event_forwarder(
+        &self,
+        automaton_id: String,
+        mut event_rx: tokio::sync::mpsc::UnboundedReceiver<AutomatonEvent>,
+    ) -> broadcast::Sender<AutomatonEvent> {
+        let (broadcast_tx, _) = broadcast::channel(EVENT_BROADCAST_CAPACITY);
+        let channels = self.event_channels.clone();
+        channels.insert(automaton_id.clone(), broadcast_tx.clone());
+
+        let tx_for_task = broadcast_tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                let is_done = matches!(event, AutomatonEvent::Done);
+                let _ = tx_for_task.send(event);
+                if is_done {
+                    break;
+                }
+            }
+            channels.remove(&automaton_id);
+        });
+
+        broadcast_tx
+    }
+
+    fn build_runner_config(&self, model: Option<&str>) -> AgentRunnerConfig {
+        let mut config = AgentRunnerConfig::default();
+        if let Some(m) = model {
+            config.default_model = m.to_string();
+        }
+        config
     }
 }
 
@@ -50,8 +144,9 @@ impl AutomatonController for AutomatonBridge {
         &self,
         project_id: &str,
         workspace_root: Option<PathBuf>,
+        auth_token: Option<String>,
+        model: Option<String>,
     ) -> Result<String, String> {
-        // Prevent duplicate loops for the same project.
         if let Some(entry) = self.project_handles.get(project_id) {
             let (ref id, ref handle) = *entry;
             if !handle.is_finished() {
@@ -59,29 +154,43 @@ impl AutomatonController for AutomatonBridge {
                     "A dev loop is already running for project {project_id} (automaton_id: {id})"
                 ));
             }
-            // Previous run finished; clean up stale entry.
             drop(entry);
             self.project_handles.remove(project_id);
         }
 
-        let automaton = DevLoopAutomaton::new(
-            self.domain.clone(),
-            self.provider.clone(),
-            AgentRunnerConfig::default(),
-            self.catalog.clone(),
+        let domain = self.domain_with_jwt(auth_token.as_deref());
+        let workspace = workspace_root
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
+        let tool_executor = self.build_tool_executor(
+            domain.clone(),
+            auth_token.as_deref(),
+            &workspace,
         );
+
+        let runner_config = self.build_runner_config(model.as_deref());
+
+        let automaton = DevLoopAutomaton::new(
+            domain,
+            self.provider.clone(),
+            runner_config,
+            self.catalog.clone(),
+        )
+        .with_tool_executor(tool_executor);
 
         let config = serde_json::json!({
             "project_id": project_id,
         });
 
-        let (handle, _event_rx) = self
+        let (handle, event_rx) = self
             .runtime
             .install(Box::new(automaton), config, workspace_root)
             .await
             .map_err(|e| format!("failed to install dev-loop automaton: {e}"))?;
 
         let automaton_id = handle.id().as_str().to_string();
+        self.spawn_event_forwarder(automaton_id.clone(), event_rx);
+
         info!(project_id, automaton_id = %automaton_id, "Dev loop started");
         self.project_handles
             .insert(project_id.to_string(), (automaton_id.clone(), handle));
@@ -126,39 +235,44 @@ impl AutomatonController for AutomatonBridge {
         project_id: &str,
         task_id: &str,
         workspace_root: Option<PathBuf>,
+        auth_token: Option<String>,
+        model: Option<String>,
     ) -> Result<String, String> {
-        let automaton = TaskRunAutomaton::new(
-            self.domain.clone(),
-            self.provider.clone(),
-            AgentRunnerConfig::default(),
-            self.catalog.clone(),
+        let domain = self.domain_with_jwt(auth_token.as_deref());
+        let workspace = workspace_root
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
+        let tool_executor = self.build_tool_executor(
+            domain.clone(),
+            auth_token.as_deref(),
+            &workspace,
         );
+
+        let runner_config = self.build_runner_config(model.as_deref());
+
+        let automaton = TaskRunAutomaton::new(
+            domain,
+            self.provider.clone(),
+            runner_config,
+            self.catalog.clone(),
+        )
+        .with_tool_executor(tool_executor);
 
         let config = serde_json::json!({
             "project_id": project_id,
             "task_id": task_id,
         });
 
-        let (mut handle, _event_rx) = self
+        let (handle, event_rx) = self
             .runtime
             .install(Box::new(automaton), config, workspace_root)
             .await
             .map_err(|e| format!("failed to install task-run automaton: {e}"))?;
 
         let automaton_id = handle.id().as_str().to_string();
-        info!(project_id, task_id, automaton_id = %automaton_id, "Single task execution started");
+        self.spawn_event_forwarder(automaton_id.clone(), event_rx);
 
-        handle.wait().await;
-
-        let status = handle.status();
-        match status {
-            aura_automaton::AutomatonStatus::Completed => {
-                Ok(format!("Task {task_id} executed successfully"))
-            }
-            aura_automaton::AutomatonStatus::Failed => {
-                Err(format!("Task {task_id} execution failed"))
-            }
-            other => Err(format!("Task {task_id} ended with status {other:?}")),
-        }
+        info!(project_id, task_id, automaton_id = %automaton_id, "Task execution started (non-blocking)");
+        Ok(automaton_id)
     }
 }

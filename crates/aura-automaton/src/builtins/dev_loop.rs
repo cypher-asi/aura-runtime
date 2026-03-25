@@ -69,6 +69,7 @@ pub struct DevLoopAutomaton {
     provider: Arc<dyn ModelProvider>,
     runner: AgentRunner,
     catalog: Arc<ToolCatalog>,
+    tool_executor: Option<Arc<dyn aura_agent::types::AgentToolExecutor>>,
 }
 
 impl DevLoopAutomaton {
@@ -83,7 +84,19 @@ impl DevLoopAutomaton {
             provider,
             runner: AgentRunner::new(config),
             catalog,
+            tool_executor: None,
         }
+    }
+
+    /// Attach a real tool executor for filesystem/command operations.
+    /// Without this, the agent cannot perform any file or command operations.
+    #[must_use]
+    pub fn with_tool_executor(
+        mut self,
+        executor: Arc<dyn aura_agent::types::AgentToolExecutor>,
+    ) -> Self {
+        self.tool_executor = Some(executor);
+        self
     }
 }
 
@@ -100,7 +113,7 @@ impl Automaton for DevLoopAutomaton {
     async fn on_install(&self, ctx: &TickContext) -> Result<(), AutomatonError> {
         let cfg = DevLoopConfig::from_json(&ctx.config)?;
 
-        let session = self
+        match self
             .domain
             .create_session(aura_tools::domain_tools::CreateSessionParams {
                 instance_id: cfg.agent_instance_id.clone(),
@@ -108,18 +121,22 @@ impl Automaton for DevLoopAutomaton {
                 model: Some(cfg.model.clone()),
             })
             .await
-            .map_err(|e| AutomatonError::DomainApi(format!("create session: {e}")))?;
-
-        // Persist bootstrap state for later ticks (TickContext is immutable for
-        // state during on_install, so we rely on the caller seeding the state).
-        // The runtime seeds AutomatonState before the first tick, so we use
-        // config as the source of truth and persist the session_id via an event.
-        ctx.emit(AutomatonEvent::LogLine {
-            message: format!(
-                "session {} created for project {}",
-                session.id, cfg.project_id
-            ),
-        });
+        {
+            Ok(session) => {
+                ctx.emit(AutomatonEvent::LogLine {
+                    message: format!(
+                        "session {} created for project {}",
+                        session.id, cfg.project_id
+                    ),
+                });
+            }
+            Err(e) => {
+                warn!(project_id = %cfg.project_id, error = %e, "session creation unavailable, proceeding without");
+                ctx.emit(AutomatonEvent::LogLine {
+                    message: format!("dev loop starting for project {} (no session)", cfg.project_id),
+                });
+            }
+        }
 
         Ok(())
     }
@@ -318,10 +335,12 @@ impl DevLoopAutomaton {
             }
         });
 
-        // Provide a no-op executor – the real tool dispatch is handled by the
-        // agent's own TaskToolExecutor wired at a higher level.
+        let inner_executor: Arc<dyn aura_agent::types::AgentToolExecutor> = self
+            .tool_executor
+            .clone()
+            .unwrap_or_else(|| Arc::new(NoOpToolExecutor));
         let executor = aura_agent::task_executor::TaskToolExecutor {
-            inner: Arc::new(NoOpToolExecutor),
+            inner: inner_executor,
             project_folder: project.path.clone(),
             build_command: project.build_command.clone(),
             task_context: String::new(),
