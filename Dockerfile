@@ -54,4 +54,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
 
 USER aura
 
-ENTRYPOINT ["aura", "--ui", "none"]
+ENTRYPOINT ["aura", "run", "--ui", "none"]

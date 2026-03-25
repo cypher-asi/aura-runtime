@@ -59,10 +59,14 @@ impl NodeConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
-        if let Ok(val) = std::env::var("DATA_DIR") {
+        if let Ok(val) = std::env::var("AURA_DATA_DIR")
+            .or_else(|_| std::env::var("DATA_DIR"))
+        {
             config.data_dir = PathBuf::from(val);
         }
-        if let Ok(val) = std::env::var("BIND_ADDR") {
+        if let Ok(val) = std::env::var("AURA_LISTEN_ADDR")
+            .or_else(|_| std::env::var("BIND_ADDR"))
+        {
             config.bind_addr = val;
         }
         if let Ok(val) = std::env::var("SYNC_WRITES") {
