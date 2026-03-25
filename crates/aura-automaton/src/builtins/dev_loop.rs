@@ -1,12 +1,14 @@
 //! Dev-loop automaton – the core continuous task-execution loop.
 //!
-//! Replaces `DevLoopEngine::run_loop()` from `aura-app`. Each tick claims a
-//! task via `DomainApi`, runs it through `AgentRunner`, processes the outcome,
-//! and decides whether to continue, retry, or finish.
+//! The loop is fully self-managed: it fetches all tasks on first tick,
+//! topologically sorts them by dependencies, and executes them one at a
+//! time. Task status transitions are handled internally and synced back
+//! to the domain API as a best-effort side-effect.
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use aura_agent::agent_runner::{
     AgentRunner, AgentRunnerConfig, AgenticTaskParams, ShellTaskParams, TaskExecutionResult,
@@ -22,19 +24,18 @@ use crate::events::AutomatonEvent;
 use crate::runtime::{Automaton, TickOutcome};
 use crate::schedule::Schedule;
 
-const STATE_PROJECT_ID: &str = "project_id";
-const STATE_AGENT_INSTANCE_ID: &str = "agent_instance_id";
-const STATE_SESSION_ID: &str = "session_id";
 const STATE_COMPLETED_COUNT: &str = "completed_count";
 const STATE_FAILED_COUNT: &str = "failed_count";
 const STATE_WORK_LOG: &str = "work_log";
 const STATE_RETRY_COUNTS: &str = "retry_counts";
 const STATE_LOOP_FINISHED: &str = "loop_finished";
-const STATE_TASKS_READIED: &str = "tasks_readied";
+const STATE_TASK_QUEUE: &str = "task_queue";
+const STATE_DONE_IDS: &str = "done_ids";
+const STATE_FAILED_IDS: &str = "failed_ids";
+const STATE_INITIALIZED: &str = "initialized";
 
 const MAX_RETRIES_PER_TASK: u32 = 2;
 
-/// Configuration extracted from `TickContext::config`.
 struct DevLoopConfig {
     project_id: String,
     agent_instance_id: String,
@@ -90,8 +91,6 @@ impl DevLoopAutomaton {
         }
     }
 
-    /// Attach a real tool executor for filesystem/command operations.
-    /// Without this, the agent cannot perform any file or command operations.
     #[must_use]
     pub fn with_tool_executor(
         mut self,
@@ -100,6 +99,59 @@ impl DevLoopAutomaton {
         self.tool_executor = Some(executor);
         self
     }
+}
+
+/// Topologically sort tasks by dependencies. Returns task IDs in execution
+/// order. Tasks with no dependencies come first.
+fn topological_sort(tasks: &[TaskDescriptor]) -> Vec<String> {
+    let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+    let mut in_degree: HashMap<&str, usize> = HashMap::new();
+    let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
+
+    for t in tasks {
+        in_degree.entry(&t.id).or_insert(0);
+        adj.entry(&t.id).or_default();
+        for dep in &t.dependencies {
+            if task_ids.contains(dep.as_str()) {
+                adj.entry(dep.as_str()).or_default().push(&t.id);
+                *in_degree.entry(&t.id).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut queue: VecDeque<&str> = in_degree
+        .iter()
+        .filter(|(_, &deg)| deg == 0)
+        .map(|(&id, _)| id)
+        .collect();
+
+    // Stable sort: prefer tasks by their order field
+    let order_map: HashMap<&str, u32> = tasks.iter().map(|t| (t.id.as_str(), t.order)).collect();
+    let mut queue_vec: Vec<&str> = queue.drain(..).collect();
+    queue_vec.sort_by_key(|id| order_map.get(id).copied().unwrap_or(u32::MAX));
+    queue = queue_vec.into_iter().collect();
+
+    let mut result = Vec::new();
+    while let Some(node) = queue.pop_front() {
+        result.push(node.to_string());
+        if let Some(neighbors) = adj.get(node) {
+            let mut next_batch: Vec<&str> = Vec::new();
+            for &neighbor in neighbors {
+                if let Some(deg) = in_degree.get_mut(neighbor) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        next_batch.push(neighbor);
+                    }
+                }
+            }
+            next_batch.sort_by_key(|id| order_map.get(id).copied().unwrap_or(u32::MAX));
+            for n in next_batch {
+                queue.push_back(n);
+            }
+        }
+    }
+
+    result
 }
 
 #[async_trait::async_trait]
@@ -135,7 +187,10 @@ impl Automaton for DevLoopAutomaton {
             Err(e) => {
                 warn!(project_id = %cfg.project_id, error = %e, "session creation unavailable, proceeding without");
                 ctx.emit(AutomatonEvent::LogLine {
-                    message: format!("dev loop starting for project {} (no session)", cfg.project_id),
+                    message: format!(
+                        "dev loop starting for project {} (no session)",
+                        cfg.project_id
+                    ),
                 });
             }
         }
@@ -149,100 +204,143 @@ impl Automaton for DevLoopAutomaton {
         }
 
         let cfg = DevLoopConfig::from_json(&ctx.config)?;
-        let project_id = ctx
-            .state
-            .get::<String>(STATE_PROJECT_ID)
-            .unwrap_or(cfg.project_id.clone());
-        let agent_id = ctx
-            .state
-            .get::<String>(STATE_AGENT_INSTANCE_ID)
-            .unwrap_or(cfg.agent_instance_id.clone());
+        let project_id = &cfg.project_id;
 
-        // ------------------------------------------------------------------
-        // 0. On first tick, resolve initial task readiness (dependency-aware)
-        // ------------------------------------------------------------------
-        let already_readied: bool = ctx.state.get(STATE_TASKS_READIED).unwrap_or(false);
-        if !already_readied {
-            if let Ok(tasks) = self.domain.list_tasks(&project_id, None, None).await {
-                let done_ids: std::collections::HashSet<&str> = tasks
-                    .iter()
-                    .filter(|t| t.status == "done")
-                    .map(|t| t.id.as_str())
-                    .collect();
-
-                let promotable: Vec<_> = tasks
-                    .iter()
-                    .filter(|t| t.status == "pending")
-                    .filter(|t| {
-                        t.dependencies.is_empty()
-                            || t.dependencies.iter().all(|dep| done_ids.contains(dep.as_str()))
-                    })
-                    .collect();
-
-                if !promotable.is_empty() {
-                    info!(count = promotable.len(), "Transitioning dependency-satisfied tasks to ready");
-                    for t in &promotable {
-                        if let Err(e) = self.domain.transition_task(&t.id, "ready", None).await {
-                            warn!(task_id = %t.id, error = %e, "Failed to transition task to ready");
-                        }
-                    }
-                }
-
-                let ready_count = tasks.iter().filter(|t| t.status == "ready").count() + promotable.len();
-                let pending_count = tasks.iter().filter(|t| t.status == "pending").count() - promotable.len();
-                info!(ready_count, pending_count, total = tasks.len(), "Task readiness check complete");
+        // ==================================================================
+        // 0. Initialize: fetch all tasks, sort, build internal queue
+        // ==================================================================
+        let initialized: bool = ctx.state.get(STATE_INITIALIZED).unwrap_or(false);
+        if !initialized {
+            if self.tool_executor.is_none() {
+                return Err(AutomatonError::InvalidConfig(
+                    "no tool executor configured — the agent cannot perform file or command operations".into(),
+                ));
             }
-            ctx.state.set(STATE_TASKS_READIED, &true);
-        }
 
-        // ------------------------------------------------------------------
-        // 1. Claim next task
-        // ------------------------------------------------------------------
-        let task = match self.domain.claim_next_task(&project_id, &agent_id, None).await {
-            Ok(Some(t)) => {
-                info!(task_id = %t.id, title = %t.title, "Claimed task");
-                t
-            }
-            Ok(None) => {
-                info!("No ready tasks to claim, checking for retries");
-                if self.try_retry_failed(ctx, &project_id).await? {
-                    return Ok(TickOutcome::Continue);
-                }
-                info!("No tasks remaining, finishing loop");
+            let tasks = self
+                .domain
+                .list_tasks(project_id, None, None)
+                .await
+                .map_err(|e| AutomatonError::DomainApi(e.to_string()))?;
+
+            if tasks.is_empty() {
+                info!("No tasks found for project, finishing");
                 return self.finish(ctx).await;
             }
+
+            let already_done: Vec<String> = tasks
+                .iter()
+                .filter(|t| t.status == "done")
+                .map(|t| t.id.clone())
+                .collect();
+
+            let executable: Vec<&TaskDescriptor> = tasks
+                .iter()
+                .filter(|t| t.status != "done")
+                .collect();
+
+            let sorted = topological_sort(
+                &executable.iter().map(|t| (*t).clone()).collect::<Vec<_>>(),
+            );
+
+            info!(
+                total = tasks.len(),
+                already_done = already_done.len(),
+                to_execute = sorted.len(),
+                "Task queue initialized"
+            );
+
+            ctx.state.set(STATE_TASK_QUEUE, &sorted);
+            ctx.state.set(STATE_DONE_IDS, &already_done);
+            ctx.state.set::<Vec<String>>(STATE_FAILED_IDS, &vec![]);
+            ctx.state.set(STATE_INITIALIZED, &true);
+
+            ctx.emit(AutomatonEvent::LogLine {
+                message: format!(
+                    "Dev loop ready: {} tasks to execute ({} already done)",
+                    sorted.len(),
+                    already_done.len()
+                ),
+            });
+
+            return Ok(TickOutcome::Continue);
+        }
+
+        // ==================================================================
+        // 1. Pick next task from queue
+        // ==================================================================
+        let mut queue: Vec<String> = ctx.state.get(STATE_TASK_QUEUE).unwrap_or_default();
+        let done_ids: Vec<String> = ctx.state.get(STATE_DONE_IDS).unwrap_or_default();
+        let done_set: HashSet<&str> = done_ids.iter().map(|s| s.as_str()).collect();
+
+        if queue.is_empty() {
+            // Check for retries before finishing
+            if self.try_retry_failed(ctx, project_id).await? {
+                return Ok(TickOutcome::Continue);
+            }
+            info!("Task queue empty, finishing loop");
+            return self.finish(ctx).await;
+        }
+
+        let task_id = queue.remove(0);
+        ctx.state.set(STATE_TASK_QUEUE, &queue);
+
+        // Fetch the task details
+        let task = match self.domain.get_task(&task_id, None).await {
+            Ok(t) => t,
             Err(e) => {
-                error!(error = %e, "claim_next_task failed");
-                return Err(AutomatonError::DomainApi(e.to_string()));
+                warn!(task_id = %task_id, error = %e, "Failed to fetch task, skipping");
+                return Ok(TickOutcome::Continue);
             }
         };
+
+        // Check dependencies are satisfied
+        if !task.dependencies.is_empty()
+            && !task.dependencies.iter().all(|dep| done_set.contains(dep.as_str()))
+        {
+            // Dependencies not met — push to back of queue
+            info!(task_id = %task.id, title = %task.title, "Dependencies not yet met, deferring");
+            let mut queue: Vec<String> = ctx.state.get(STATE_TASK_QUEUE).unwrap_or_default();
+            queue.push(task.id.clone());
+            ctx.state.set(STATE_TASK_QUEUE, &queue);
+            return Ok(TickOutcome::Continue);
+        }
+
+        // ==================================================================
+        // 2. Transition to in_progress and execute
+        // ==================================================================
+        info!(task_id = %task.id, title = %task.title, "Starting task");
+
+        if let Err(e) = self.domain.transition_task(&task.id, "in_progress", None).await {
+            warn!(task_id = %task.id, error = %e, "Failed to transition task to in_progress (continuing anyway)");
+        }
 
         ctx.emit(AutomatonEvent::TaskStarted {
             task_id: task.id.clone(),
             task_title: task.title.clone(),
         });
 
-        // ------------------------------------------------------------------
-        // 2. Execute task
-        // ------------------------------------------------------------------
         let result = self.execute_task(ctx, &cfg, &task).await;
 
-        // ------------------------------------------------------------------
+        // ==================================================================
         // 3. Process result
-        // ------------------------------------------------------------------
+        // ==================================================================
         match result {
             Ok(exec) => {
-                self.domain
-                    .transition_task(&task.id, "done", None)
-                    .await
-                    .map_err(|e| AutomatonError::DomainApi(e.to_string()))?;
+                if let Err(e) = self.domain.transition_task(&task.id, "done", None).await {
+                    warn!(task_id = %task.id, error = %e, "Failed to sync task done status to backend");
+                }
 
-                self.resolve_dependencies(ctx, &project_id, &task.id).await;
+                let mut done_ids: Vec<String> =
+                    ctx.state.get(STATE_DONE_IDS).unwrap_or_default();
+                done_ids.push(task.id.clone());
+                ctx.state.set(STATE_DONE_IDS, &done_ids);
 
                 let completed: u32 = ctx.state.get(STATE_COMPLETED_COUNT).unwrap_or(0) + 1;
                 ctx.state.set(STATE_COMPLETED_COUNT, &completed);
 
-                let mut work_log: Vec<String> = ctx.state.get(STATE_WORK_LOG).unwrap_or_default();
+                let mut work_log: Vec<String> =
+                    ctx.state.get(STATE_WORK_LOG).unwrap_or_default();
                 work_log.push(format!(
                     "Task (completed): {}\nNotes: {}",
                     task.title, exec.notes
@@ -253,23 +351,30 @@ impl Automaton for DevLoopAutomaton {
                     task_id: task.id.clone(),
                     summary: exec.notes,
                 });
-
                 ctx.emit(AutomatonEvent::TokenUsage {
                     input_tokens: exec.input_tokens,
                     output_tokens: exec.output_tokens,
                 });
+
+                info!(task_id = %task.id, title = %task.title, "Task completed successfully");
             }
             Err(e) => {
-                warn!(task_id = %task.id, error = %e, "task execution failed");
+                warn!(task_id = %task.id, error = %e, "Task execution failed");
 
-                if let Err(e) = self.domain.transition_task(&task.id, "failed", None).await {
-                    warn!(task_id = %task.id, error = %e, "failed to transition task to failed status");
+                if let Err(te) = self.domain.transition_task(&task.id, "failed", None).await {
+                    warn!(task_id = %task.id, error = %te, "Failed to sync task failed status to backend");
                 }
+
+                let mut failed_ids: Vec<String> =
+                    ctx.state.get(STATE_FAILED_IDS).unwrap_or_default();
+                failed_ids.push(task.id.clone());
+                ctx.state.set(STATE_FAILED_IDS, &failed_ids);
 
                 let failed: u32 = ctx.state.get(STATE_FAILED_COUNT).unwrap_or(0) + 1;
                 ctx.state.set(STATE_FAILED_COUNT, &failed);
 
-                let mut work_log: Vec<String> = ctx.state.get(STATE_WORK_LOG).unwrap_or_default();
+                let mut work_log: Vec<String> =
+                    ctx.state.get(STATE_WORK_LOG).unwrap_or_default();
                 work_log.push(format!("Task (failed): {}\nReason: {e}", task.title));
                 ctx.state.set(STATE_WORK_LOG, &work_log);
 
@@ -307,12 +412,6 @@ impl DevLoopAutomaton {
         cfg: &DevLoopConfig,
         task: &TaskDescriptor,
     ) -> Result<TaskExecutionResult, AutomatonError> {
-        if self.tool_executor.is_none() {
-            return Err(AutomatonError::InvalidConfig(
-                "no tool executor configured — the agent cannot perform file or command operations".into(),
-            ));
-        }
-
         let project = self
             .domain
             .get_project(&cfg.project_id, None)
@@ -427,88 +526,59 @@ impl DevLoopAutomaton {
     async fn try_retry_failed(
         &self,
         ctx: &mut TickContext,
-        project_id: &str,
+        _project_id: &str,
     ) -> Result<bool, AutomatonError> {
-        let tasks = self
-            .domain
-            .list_tasks(project_id, None, None)
-            .await
-            .map_err(|e| AutomatonError::DomainApi(e.to_string()))?;
+        let failed_ids: Vec<String> = ctx.state.get(STATE_FAILED_IDS).unwrap_or_default();
+        if failed_ids.is_empty() {
+            return Ok(false);
+        }
 
-        let mut retry_counts: std::collections::HashMap<String, u32> =
+        let mut retry_counts: HashMap<String, u32> =
             ctx.state.get(STATE_RETRY_COUNTS).unwrap_or_default();
 
-        let retryable: Vec<&TaskDescriptor> = tasks
+        let retryable: Vec<String> = failed_ids
             .iter()
-            .filter(|t| {
-                t.status == "failed"
-                    && *retry_counts.get(&t.id).unwrap_or(&0) < MAX_RETRIES_PER_TASK
-            })
+            .filter(|id| *retry_counts.get(*id).unwrap_or(&0) < MAX_RETRIES_PER_TASK)
+            .cloned()
             .collect();
 
         if retryable.is_empty() {
             return Ok(false);
         }
 
-        for t in &retryable {
-            let count = retry_counts.entry(t.id.clone()).or_insert(0);
-            *count += 1;
-            info!(task_id = %t.id, title = %t.title, attempt = *count, "retrying failed task");
+        let mut queue: Vec<String> = ctx.state.get(STATE_TASK_QUEUE).unwrap_or_default();
+        let new_failed: Vec<String> = failed_ids
+            .iter()
+            .filter(|id| !retryable.contains(id))
+            .cloned()
+            .collect();
 
-            self.domain
-                .transition_task(&t.id, "ready", None)
+        for id in &retryable {
+            let count = retry_counts.entry(id.clone()).or_insert(0);
+            *count += 1;
+            info!(task_id = %id, attempt = *count, "Retrying failed task");
+
+            if let Err(e) = self
+                .domain
+                .transition_task(id, "ready", None)
                 .await
-                .map_err(|e| AutomatonError::DomainApi(e.to_string()))?;
+            {
+                warn!(task_id = %id, error = %e, "Failed to sync retry status to backend");
+            }
+
+            queue.push(id.clone());
 
             ctx.emit(AutomatonEvent::TaskRetrying {
-                task_id: t.id.clone(),
+                task_id: id.clone(),
                 attempt: *count,
                 reason: "automatic retry after failure".into(),
             });
         }
 
+        ctx.state.set(STATE_TASK_QUEUE, &queue);
+        ctx.state.set(STATE_FAILED_IDS, &new_failed);
         ctx.state.set(STATE_RETRY_COUNTS, &retry_counts);
         Ok(true)
-    }
-
-    /// After a task completes, check if any pending tasks now have all
-    /// dependencies satisfied and transition them to ready.
-    async fn resolve_dependencies(
-        &self,
-        ctx: &TickContext,
-        project_id: &str,
-        completed_task_id: &str,
-    ) {
-        let tasks = match self.domain.list_tasks(project_id, None, None).await {
-            Ok(t) => t,
-            Err(e) => {
-                warn!(error = %e, "Failed to list tasks for dependency resolution");
-                return;
-            }
-        };
-
-        let done_ids: std::collections::HashSet<&str> = tasks
-            .iter()
-            .filter(|t| t.status == "done")
-            .map(|t| t.id.as_str())
-            .collect();
-
-        let newly_ready: Vec<_> = tasks
-            .iter()
-            .filter(|t| t.status == "pending")
-            .filter(|t| t.dependencies.contains(&completed_task_id.to_string()))
-            .filter(|t| t.dependencies.iter().all(|dep| done_ids.contains(dep.as_str())))
-            .collect();
-
-        for t in &newly_ready {
-            info!(task_id = %t.id, title = %t.title, "Dependencies satisfied, promoting to ready");
-            if let Err(e) = self.domain.transition_task(&t.id, "ready", None).await {
-                warn!(task_id = %t.id, error = %e, "Failed to transition newly-ready task");
-            }
-            ctx.emit(AutomatonEvent::LogLine {
-                message: format!("Task '{}' is now ready (dependencies met)", t.title),
-            });
-        }
     }
 
     async fn finish(&self, ctx: &mut TickContext) -> Result<TickOutcome, AutomatonError> {
@@ -521,6 +591,8 @@ impl DevLoopAutomaton {
             "all_tasks_complete"
         };
 
+        info!(outcome, completed, failed, "Dev loop finished");
+
         ctx.emit(AutomatonEvent::LoopFinished {
             outcome: outcome.into(),
             completed_count: completed,
@@ -532,7 +604,6 @@ impl DevLoopAutomaton {
     }
 }
 
-/// Check whether a task descriptor represents a shell-only command.
 pub(crate) fn extract_shell_command(task: &TaskDescriptor) -> Option<String> {
     let title_lower = task.title.to_lowercase();
     if title_lower.starts_with("run:") || title_lower.starts_with("shell:") {
@@ -582,8 +653,6 @@ pub(crate) fn forward_agent_event(
     let _ = tx.send(automaton_event);
 }
 
-/// Minimal no-op executor used as the inner delegate when the real tool
-/// execution is handled by the wrapping `TaskToolExecutor`.
 struct NoOpToolExecutor;
 
 #[async_trait::async_trait]
