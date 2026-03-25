@@ -194,6 +194,15 @@ impl AgentRunner {
             .await
             .map_err(|e| crate::AgentError::Internal(e.to_string()))?;
 
+        if let Some(ref llm_err) = result.llm_error {
+            return Err(crate::AgentError::Internal(format!("LLM error: {llm_err}")));
+        }
+        if result.iterations == 0 {
+            return Err(crate::AgentError::Internal(
+                "Agent loop completed zero iterations — LLM may not be configured correctly".into(),
+            ));
+        }
+
         Ok(finalize_loop_result(result))
     }
 
