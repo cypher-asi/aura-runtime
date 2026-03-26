@@ -36,6 +36,9 @@ base64 = "0.22"
 uuid = { workspace = true }
 futures-util = "0.3"
 dotenvy = "0.15.7"
+portable-pty = "0.8"
+which = "7"
+dirs = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -31,6 +31,7 @@ pub mod protocol;
 pub mod router;
 pub mod scheduler;
 pub mod session;
+pub mod terminal;
 mod worker;
 
 pub use config::NodeConfig;

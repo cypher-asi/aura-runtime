@@ -1,0 +1,254 @@
+//! Terminal WebSocket handler.
+//!
+//! Exposes a single WebSocket endpoint (`/ws/terminal`) that manages the
+//! full PTY lifecycle within a single connection:
+//!
+//! 1. Client sends `{"type":"spawn","cols":80,"rows":24}`.
+//! 2. Server spawns a PTY, sends `{"type":"spawned","shell":"..."}`.
+//! 3. Bidirectional I/O: `input`/`output`/`resize`/`exit` JSON frames,
+//!    with binary data base64-encoded — same protocol as aura-os.
+//! 4. Closing the WebSocket kills the PTY.
+
+use std::io::Read;
+use std::sync::{Arc, Mutex};
+
+use axum::extract::ws::{Message, WebSocket};
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
+use futures_util::{SinkExt, StreamExt};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use serde::Deserialize;
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+
+fn default_shell() -> String {
+    #[cfg(windows)]
+    {
+        if which::which("powershell.exe").is_ok() {
+            "powershell.exe".into()
+        } else {
+            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into())
+    }
+}
+
+fn default_cwd() -> String {
+    dirs::home_dir()
+        .map(|p: std::path::PathBuf| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".into())
+}
+
+#[derive(Deserialize)]
+struct SpawnMsg {
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+#[derive(Deserialize)]
+struct ClientMsg {
+    #[serde(rename = "type")]
+    msg_type: String,
+    data: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+/// Handle a terminal WebSocket connection.
+///
+/// The first message must be `{"type":"spawn",...}`. After that the
+/// connection speaks the standard `input`/`output`/`resize`/`exit`
+/// JSON protocol.
+pub async fn handle_terminal_ws(mut socket: WebSocket) {
+    // ── 1. Wait for the spawn message ────────────────────────────────
+    let spawn = match wait_for_spawn(&mut socket).await {
+        Some(s) => s,
+        None => return,
+    };
+
+    let cols = spawn.cols.unwrap_or(80);
+    let rows = spawn.rows.unwrap_or(24);
+    let shell = default_shell();
+    let cwd = default_cwd();
+
+    // ── 2. Open PTY ──────────────────────────────────────────────────
+    let pty_system = native_pty_system();
+    let size = PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
+    let pair = match pty_system.openpty(size) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = send_json(&mut socket, &serde_json::json!({"type":"exit","code":-1})).await;
+            warn!("Failed to open PTY: {e}");
+            return;
+        }
+    };
+
+    let mut cmd = CommandBuilder::new(&shell);
+    cmd.cwd(&cwd);
+    cmd.env("TERM", "xterm-256color");
+
+    let _child = match pair.slave.spawn_command(cmd) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = send_json(&mut socket, &serde_json::json!({"type":"exit","code":-1})).await;
+            warn!("Failed to spawn shell: {e}");
+            return;
+        }
+    };
+
+    let reader = match pair.master.try_clone_reader() {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Failed to clone PTY reader: {e}");
+            return;
+        }
+    };
+    let mut writer = match pair.master.take_writer() {
+        Ok(w) => w,
+        Err(e) => {
+            warn!("Failed to take PTY writer: {e}");
+            return;
+        }
+    };
+    let master: Arc<Mutex<Box<dyn MasterPty + Send>>> = Arc::new(Mutex::new(pair.master));
+
+    // ── 3. Send spawned confirmation ─────────────────────────────────
+    let _ = send_json(&mut socket, &serde_json::json!({
+        "type": "spawned",
+        "shell": shell,
+    }))
+    .await;
+
+    info!(shell = %shell, "Terminal PTY spawned");
+
+    // ── 4. Bridge PTY ↔ WebSocket ────────────────────────────────────
+    let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(256);
+    let (exit_tx, mut exit_rx) = mpsc::channel::<i32>(1);
+
+    tokio::task::spawn_blocking(move || {
+        read_pty_loop(reader, output_tx, exit_tx);
+    });
+
+    let (mut ws_write, mut ws_read) = socket.split();
+
+    // Outbound: PTY → client
+    let outbound = async {
+        loop {
+            tokio::select! {
+                Some(data) = output_rx.recv() => {
+                    let msg = serde_json::json!({"type":"output","data": B64.encode(&data)});
+                    if ws_write.send(Message::Text(msg.to_string())).await.is_err() {
+                        break;
+                    }
+                }
+                Some(code) = exit_rx.recv() => {
+                    let _ = ws_write.send(Message::Text(
+                        serde_json::json!({"type":"exit","code":code}).to_string(),
+                    )).await;
+                    break;
+                }
+            }
+        }
+    };
+
+    // Inbound: client → PTY
+    let inbound = async {
+        while let Some(Ok(msg)) = ws_read.next().await {
+            let text = match msg {
+                Message::Text(t) => t,
+                Message::Close(_) => break,
+                _ => continue,
+            };
+            let Ok(cm) = serde_json::from_str::<ClientMsg>(&text) else {
+                continue;
+            };
+            match cm.msg_type.as_str() {
+                "input" => {
+                    if let Some(data) = cm.data {
+                        if let Ok(bytes) = B64.decode(&data) {
+                            if writer.write_all(&bytes).is_err() {
+                                break;
+                            }
+                            let _ = writer.flush();
+                        }
+                    }
+                }
+                "resize" => {
+                    if let (Some(c), Some(r)) = (cm.cols, cm.rows) {
+                        if let Ok(m) = master.lock() {
+                            let _ = m.resize(PtySize {
+                                rows: r,
+                                cols: c,
+                                pixel_width: 0,
+                                pixel_height: 0,
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = outbound => {}
+        _ = inbound => {}
+    }
+
+    info!("Terminal WebSocket disconnected");
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────
+
+async fn wait_for_spawn(socket: &mut WebSocket) -> Option<SpawnMsg> {
+    while let Some(Ok(msg)) = socket.next().await {
+        let text = match msg {
+            Message::Text(t) => t,
+            Message::Close(_) => return None,
+            _ => continue,
+        };
+        if let Ok(cm) = serde_json::from_str::<ClientMsg>(&text) {
+            if cm.msg_type == "spawn" {
+                return Some(SpawnMsg {
+                    cols: cm.cols,
+                    rows: cm.rows,
+                });
+            }
+        }
+    }
+    None
+}
+
+async fn send_json(socket: &mut WebSocket, value: &serde_json::Value) -> Result<(), axum::Error> {
+    socket
+        .send(Message::Text(value.to_string()))
+        .await
+}
+
+fn read_pty_loop(
+    mut reader: Box<dyn Read + Send>,
+    output_tx: mpsc::Sender<Vec<u8>>,
+    exit_tx: mpsc::Sender<i32>,
+) {
+    let mut buf = [0u8; 4096];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => {
+                let _ = exit_tx.blocking_send(0);
+                break;
+            }
+            Ok(n) => {
+                if output_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+            Err(_) => {
+                let _ = exit_tx.blocking_send(-1);
+                break;
+            }
+        }
+    }
+}

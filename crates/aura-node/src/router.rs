@@ -4,6 +4,7 @@ use crate::config::NodeConfig;
 use crate::scheduler::Scheduler;
 use crate::automaton_bridge::AutomatonBridge;
 use crate::session::{handle_ws_connection, WsContext};
+use crate::terminal;
 use aura_core::{AgentId, Transaction, TransactionType};
 use aura_reasoner::ModelProvider;
 use aura_store::Store;
@@ -65,6 +66,7 @@ pub fn create_router(state: RouterState) -> Router {
         .route("/tx", post(submit_tx_handler))
         .route("/agents/:agent_id/head", get(get_head_handler))
         .route("/agents/:agent_id/record", get(scan_record_handler))
+        .route("/ws/terminal", get(terminal_ws_handler))
         .route("/stream", get(ws_upgrade_handler))
         .route(
             "/stream/automaton/:automaton_id",
@@ -86,6 +88,12 @@ pub fn create_router(state: RouterState) -> Router {
         )
         .with_state(state)
         .layer(TraceLayer::new_for_http())
+}
+
+// === Terminal WebSocket ===
+
+async fn terminal_ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(terminal::handle_terminal_ws)
 }
 
 // === Health ===
