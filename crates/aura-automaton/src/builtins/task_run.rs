@@ -243,6 +243,7 @@ impl Automaton for TaskRunAutomaton {
             )),
             self_review: Default::default(),
             event_tx: Some(event_tx.clone()),
+            no_changes_needed: Default::default(),
         };
 
         let result = self
@@ -256,7 +257,21 @@ impl Automaton for TaskRunAutomaton {
             )
             .await;
 
-        self.finalize_task(ctx, &task.id, &task.title, result.map_err(Into::into)).await
+        let result = match result {
+            Ok(mut exec) => {
+                executor.merge_into_result(&mut exec).await;
+                if exec.file_ops.is_empty() && !exec.no_changes_needed {
+                    Err(anyhow::anyhow!(
+                        "task completed without any file operations — completion not verified"
+                    ))
+                } else {
+                    Ok(exec)
+                }
+            }
+            Err(e) => Err(e.into()),
+        };
+
+        self.finalize_task(ctx, &task.id, &task.title, result).await
     }
 }
 

@@ -54,6 +54,9 @@ pub struct TaskToolExecutor {
     pub self_review: Arc<Mutex<SelfReviewGuard>>,
     /// Optional event channel for status messages.
     pub event_tx: Option<mpsc::UnboundedSender<AgentLoopEvent>>,
+    /// Set to true when the agent explicitly declares no file changes are
+    /// required for this task (via `no_changes_needed` in `task_done` input).
+    pub no_changes_needed: Arc<Mutex<bool>>,
 }
 
 #[async_trait]
@@ -285,6 +288,16 @@ impl TaskToolExecutor {
             return;
         }
 
+        if let Some(no_write_prompt) = self.check_no_writes().await {
+            results.push(ToolCallResult {
+                tool_use_id: tc.id.clone(),
+                content: no_write_prompt,
+                is_error: true,
+                stop_loop: false,
+            });
+            return;
+        }
+
         if let Some(stub_prompt) = self.check_stubs_and_reject().await {
             results.push(ToolCallResult {
                 tool_use_id: tc.id.clone(),
@@ -346,6 +359,14 @@ impl TaskToolExecutor {
                 }
             }
         }
+        if tc
+            .input
+            .get("no_changes_needed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            *self.no_changes_needed.lock().await = true;
+        }
     }
 
     async fn check_self_review(&self) -> Option<String> {
@@ -357,6 +378,24 @@ impl TaskToolExecutor {
              Then call task_done again.",
             unreviewed.join("\n"),
         ))
+    }
+
+    async fn check_no_writes(&self) -> Option<String> {
+        let ops = self.tracked_file_ops.lock().await;
+        if !ops.is_empty() {
+            return None;
+        }
+        let no_changes = *self.no_changes_needed.lock().await;
+        if no_changes {
+            return None;
+        }
+        Some(
+            "ERROR: You are completing this task but have not made any file changes \
+             (write_file, edit_file, or delete_file). Implementation tasks must produce \
+             file changes. If this task genuinely requires no file changes, call task_done \
+             again with \"no_changes_needed\": true and explain why in the \"notes\" field."
+                .to_string(),
+        )
     }
 
     async fn check_stubs_and_reject(&self) -> Option<String> {
@@ -436,6 +475,22 @@ impl TaskToolExecutor {
         self.emit_text(marker);
     }
 
+    /// Merge tracked executor state (file ops, notes, follow-ups) into a
+    /// [`TaskExecutionResult`] so that downstream consumers see real evidence
+    /// instead of hardcoded defaults.
+    pub async fn merge_into_result(
+        &self,
+        exec: &mut crate::agent_runner::TaskExecutionResult,
+    ) {
+        exec.file_ops = self.tracked_file_ops.lock().await.clone();
+        let task_notes = self.notes.lock().await.clone();
+        if !task_notes.is_empty() {
+            exec.notes = task_notes;
+        }
+        exec.follow_up_tasks = self.follow_ups.lock().await.clone();
+        exec.no_changes_needed = *self.no_changes_needed.lock().await;
+    }
+
     fn emit_text(&self, text: String) {
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(AgentLoopEvent::TextDelta(text));
@@ -502,4 +557,188 @@ pub fn looks_like_compiler_errors(output: &str) -> bool {
     let has_generic_errors = output.contains("error:") && output.contains("-->");
     let has_ts_errors = output.contains("TS2") && output.contains("error TS");
     has_rust_errors || has_generic_errors || has_ts_errors
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_runner::TaskExecutionResult;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    struct NoOpInner;
+
+    #[async_trait::async_trait]
+    impl AgentToolExecutor for NoOpInner {
+        async fn execute(&self, tool_calls: &[ToolCallInfo]) -> Vec<ToolCallResult> {
+            tool_calls
+                .iter()
+                .map(|tc| ToolCallResult::success(&tc.id, "ok"))
+                .collect()
+        }
+    }
+
+    fn make_executor() -> TaskToolExecutor {
+        TaskToolExecutor {
+            inner: Arc::new(NoOpInner),
+            project_folder: "/tmp/test".to_string(),
+            build_command: None,
+            task_context: String::new(),
+            tracked_file_ops: Default::default(),
+            notes: Default::default(),
+            follow_ups: Default::default(),
+            stub_fix_attempts: Default::default(),
+            task_phase: Arc::new(Mutex::new(TaskPhase::Implementing {
+                plan: crate::planning::TaskPlan::empty(),
+            })),
+            self_review: Default::default(),
+            event_tx: None,
+            no_changes_needed: Default::default(),
+        }
+    }
+
+    fn task_done_call(notes: &str) -> ToolCallInfo {
+        ToolCallInfo {
+            id: "td_1".to_string(),
+            name: "task_done".to_string(),
+            input: serde_json::json!({ "notes": notes }),
+        }
+    }
+
+    fn task_done_no_changes(notes: &str) -> ToolCallInfo {
+        ToolCallInfo {
+            id: "td_1".to_string(),
+            name: "task_done".to_string(),
+            input: serde_json::json!({
+                "notes": notes,
+                "no_changes_needed": true,
+            }),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // task_done guard tests
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn task_done_rejects_when_no_file_ops() {
+        let executor = make_executor();
+        let calls = [task_done_call("all done")];
+        let results = executor.execute(&calls).await;
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert!(!results[0].stop_loop);
+        assert!(results[0].content.contains("not made any file changes"));
+    }
+
+    #[tokio::test]
+    async fn task_done_succeeds_with_file_ops() {
+        let executor = make_executor();
+        {
+            let mut ops = executor.tracked_file_ops.lock().await;
+            ops.push(FileOp::Create {
+                path: "src/main.rs".to_string(),
+                content: "fn main() {}".to_string(),
+            });
+        }
+        {
+            let mut sr = executor.self_review.lock().await;
+            sr.record_write("src/main.rs");
+            sr.record_read("src/main.rs");
+        }
+
+        let calls = [task_done_call("implemented feature")];
+        let results = executor.execute(&calls).await;
+
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].is_error);
+        assert!(results[0].stop_loop);
+        assert!(results[0].content.contains("completed"));
+    }
+
+    #[tokio::test]
+    async fn task_done_allows_no_ops_with_exemption() {
+        let executor = make_executor();
+        let calls = [task_done_no_changes("analysis task, no code changes required")];
+        let results = executor.execute(&calls).await;
+
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].is_error);
+        assert!(results[0].stop_loop);
+        assert!(results[0].content.contains("completed"));
+    }
+
+    // ------------------------------------------------------------------
+    // merge_into_result tests
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn merge_into_result_populates_all_fields() {
+        let executor = make_executor();
+        {
+            let mut ops = executor.tracked_file_ops.lock().await;
+            ops.push(FileOp::Create {
+                path: "new.rs".to_string(),
+                content: "code".to_string(),
+            });
+        }
+        {
+            let mut n = executor.notes.lock().await;
+            *n = "executor notes".to_string();
+        }
+        {
+            let mut fu = executor.follow_ups.lock().await;
+            fu.push(FollowUpSuggestion {
+                title: "next step".to_string(),
+                description: "do more".to_string(),
+            });
+        }
+
+        let mut result = TaskExecutionResult::default();
+        executor.merge_into_result(&mut result).await;
+
+        assert_eq!(result.file_ops.len(), 1);
+        assert_eq!(result.notes, "executor notes");
+        assert_eq!(result.follow_up_tasks.len(), 1);
+        assert_eq!(result.follow_up_tasks[0].title, "next step");
+        assert!(!result.no_changes_needed);
+    }
+
+    #[tokio::test]
+    async fn merge_preserves_loop_notes_when_executor_notes_empty() {
+        let executor = make_executor();
+        let mut result = TaskExecutionResult {
+            notes: "loop generated notes".to_string(),
+            ..Default::default()
+        };
+        executor.merge_into_result(&mut result).await;
+
+        assert_eq!(result.notes, "loop generated notes");
+    }
+
+    #[tokio::test]
+    async fn merge_sets_no_changes_needed_flag() {
+        let executor = make_executor();
+        *executor.no_changes_needed.lock().await = true;
+
+        let mut result = TaskExecutionResult::default();
+        executor.merge_into_result(&mut result).await;
+
+        assert!(result.no_changes_needed);
+    }
+
+    // ------------------------------------------------------------------
+    // extract_notes_and_follow_ups tests
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn extract_parses_no_changes_needed_flag() {
+        let executor = make_executor();
+        let tc = task_done_no_changes("just an analysis");
+        executor.extract_notes_and_follow_ups(&tc).await;
+
+        assert!(*executor.no_changes_needed.lock().await);
+        assert_eq!(*executor.notes.lock().await, "just an analysis");
+    }
 }

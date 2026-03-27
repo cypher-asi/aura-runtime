@@ -42,6 +42,10 @@ pub struct TaskExecutionResult {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub files_already_applied: bool,
+    /// When true, the agent explicitly declared that no file changes were
+    /// required for this task. Automatons use this to distinguish legitimate
+    /// no-op completions from false-positive successes.
+    pub no_changes_needed: bool,
 }
 
 /// Suggested follow-up task from agent execution.
@@ -395,6 +399,7 @@ fn finalize_loop_result(result: AgentLoopResult) -> TaskExecutionResult {
         input_tokens: result.total_input_tokens,
         output_tokens: result.total_output_tokens,
         files_already_applied: true,
+        no_changes_needed: false,
     }
 }
 

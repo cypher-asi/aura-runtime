@@ -496,9 +496,11 @@ impl DevLoopAutomaton {
             )),
             self_review: Default::default(),
             event_tx: Some(event_tx.clone()),
+            no_changes_needed: Default::default(),
         };
 
-        self.runner
+        let result = self
+            .runner
             .execute_task(
                 self.provider.as_ref(),
                 &executor,
@@ -506,8 +508,22 @@ impl DevLoopAutomaton {
                 Some(event_tx),
                 Some(cancel),
             )
-            .await
-            .map_err(|e| AutomatonError::AgentExecution(e.to_string()))
+            .await;
+
+        match result {
+            Ok(mut exec) => {
+                executor.merge_into_result(&mut exec).await;
+                if exec.file_ops.is_empty() && !exec.no_changes_needed {
+                    Err(AutomatonError::AgentExecution(
+                        "task completed without any file operations — completion not verified"
+                            .into(),
+                    ))
+                } else {
+                    Ok(exec)
+                }
+            }
+            Err(e) => Err(AutomatonError::AgentExecution(e.to_string())),
+        }
     }
 
     async fn try_retry_failed(
